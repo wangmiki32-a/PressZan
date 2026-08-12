@@ -55,6 +55,25 @@ def state_with_tasks(*tasks, paused_reason=None):
 
 
 class DashboardTest(unittest.TestCase):
+    def test_template_has_redesign_quality_and_accessibility_contract(self):
+        template = TEMPLATE.read_text(encoding="utf-8")
+
+        self.assertIn('id="theme-toggle"', template)
+        self.assertIn('aria-label="切换明暗主题"', template)
+        self.assertIn("prefers-color-scheme: dark", template)
+        self.assertIn("prefers-reduced-motion: reduce", template)
+        self.assertIn('role="img"', template)
+        self.assertIn('role="tablist"', template)
+        self.assertIn('aria-selected=', template)
+        self.assertIn('aria-live="polite"', template)
+        self.assertIn("hasTrendSignal", template)
+        self.assertIn("@media (max-width: 720px)", template)
+        self.assertNotIn("class=\"cards\"", template)
+        self.assertNotIn("class=\"progress\"", template)
+        self.assertNotIn("Feedback intelligence", template)
+        self.assertNotIn("—", template)
+        self.assertNotIn("–", template)
+
     def test_partial_task_is_current_header_only(self):
         state = state_with_tasks(daily("2026-08-12", 25, 25))
 
@@ -154,6 +173,8 @@ class DashboardTest(unittest.TestCase):
         self.assertNotIn("https://", html)
         self.assertNotIn("</script><script>alert(1)</script>", html)
         self.assertIn("<\\/script>", html)
+        self.assertNotIn("—", html)
+        self.assertNotIn("–", html)
 
 
 if __name__ == "__main__":
