@@ -101,3 +101,23 @@ class AggregateState:
     paused_reason: Optional[str]
     episodes: Mapping[str, FeedbackEpisode]
     outgoing_touches: Tuple[OutgoingTouch, ...]
+
+
+@dataclass(frozen=True)
+class Candidate:
+    photographer_id: str
+    display_name: str
+    profile_url: str
+    source_photo_id: str
+    source_url: str
+    page_order: int
+    tier: str
+    is_retest: bool
+
+
+@dataclass(frozen=True)
+class SelectionResult:
+    selected: Tuple[Mapping[str, Any], ...]
+    status: str
+    remaining_daily_quota: int
+    projected_unique_count: int
