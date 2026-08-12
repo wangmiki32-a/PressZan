@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from tests import bootstrap  # noqa: F401
 from feedback_growth.model import CheckpointHeader, Event, RunLog
 from feedback_growth.store import (
     LogValidationError,
