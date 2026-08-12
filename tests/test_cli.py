@@ -98,6 +98,25 @@ def seed_approved_likes(root, count, base_time, daily_task_id):
 
 
 class CliTest(unittest.TestCase):
+    def test_dashboard_command_writes_rebuildable_offline_html(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 25, dt(12, 9), "2026-08-12")
+
+            result, payload = invoke(
+                root,
+                "dashboard",
+                "--now",
+                "2026-08-12T12:00:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            output = Path(payload["path"])
+            self.assertEqual(output, root.resolve() / "dashboard.html")
+            html = output.read_text(encoding="utf-8")
+            self.assertIn('"confirmed_likes":25', html)
+            self.assertNotIn("https://", html)
+
     def test_first_run_requires_preflight(self):
         with TemporaryDirectory() as directory:
             result, payload = invoke(Path(directory), "begin", "--mode", "run", "--now", "2026-08-12T09:00:00+00:00")

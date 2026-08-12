@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from . import SCHEMA_VERSION
 from .analytics import WINDOW, classify_photographer, rebuild_state
+from .dashboard import generate_dashboard
 from .model import Candidate, CheckpointHeader, Event, RunLog
 from .selector import BATCH_TARGET, DAILY_TARGET, select_batch
 from .store import (
@@ -424,6 +425,15 @@ def command_status(args) -> int:
     return 0
 
 
+def command_dashboard(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    state = rebuild_state(load_effective_runs(root), now)
+    path = generate_dashboard(root, state, now)
+    _json({"ok": True, "path": str(path)})
+    return 0
+
+
 def _add_common(parser) -> None:
     parser.add_argument("--state-root")
     parser.add_argument("--now")
@@ -470,6 +480,9 @@ def build_parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status")
     status.add_argument("--json", action="store_true")
     _add_common(status)
+
+    dashboard = commands.add_parser("dashboard")
+    _add_common(dashboard)
     return parser
 
 
@@ -483,6 +496,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "approve": command_approve,
         "finish": command_finish,
         "status": command_status,
+        "dashboard": command_dashboard,
     }[args.command]
     try:
         return handler(args)
