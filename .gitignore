@@ -1,1 +1,4 @@
 .worktrees/
+.local/500px-feedback-growth/
+__pycache__/
+*.py[cod]
