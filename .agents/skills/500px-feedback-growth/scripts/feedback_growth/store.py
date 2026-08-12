@@ -23,6 +23,7 @@ _EVENT_FIELDS = {
         {"photographer_id", "display_name", "profile_url", "source_photo_id", "source_url", "page_order"},
         set(),
     ),
+    "scan_issue": ({"scan_id", "photo_id", "reason", "evidence_summary"}, set()),
     "preview_created": (
         {"preview_id", "candidate_digest", "expires_at", "seed", "quota_snapshot", "candidate_ids", "candidate_plan"},
         set(),

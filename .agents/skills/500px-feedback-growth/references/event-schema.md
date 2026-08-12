@@ -18,6 +18,7 @@
 | `work_observed` | `scan_id`, `photo_id`, `photo_url`, `position` | — |
 | `received_like_observed` | `scan_id`, `photo_id`, `work_position`, `photographer_id`, `display_name`, `profile_url` | — |
 | `candidate_observed` | `photographer_id`, `display_name`, `profile_url`, `source_photo_id`, `source_url`, `page_order` | — |
+| `scan_issue` | `scan_id`, `photo_id`, `reason`, `evidence_summary` | — |
 | `preview_created` | `preview_id`, `candidate_digest`, `expires_at`, `seed`, `quota_snapshot`, `candidate_ids`, `candidate_plan` | — |
 | `onboarding_approved` | `preview_id`, `candidate_digest`, `approved_at` | — |
 | `outgoing_like_confirmed` | `action_id`, `photographer_id`, `photo_id`, `photo_url`, `quota_bucket`, `before_state`, `after_state` | — |
@@ -42,4 +43,5 @@
 - `before_state` / `after_state` 必须来自同一可见控件的前后读取。
 - `quota_bucket` 仅用 `exploit_first`、`retest`、`new`、`verified_second`。
 - `safety_paused.reason` 使用可搜索值：`captcha`、`rate_limit`、`login_lost`、`platform_warning`、`account_mismatch`、`ambiguous_state`。
+- `scan_issue.reason` 用于一次刷新后仍无法读取的只读页面：例如 `liker_list_unavailable`；它不代表账号被安全暂停。
 - 日志不得包含密码、Cookie、token、local storage、私信正文或无关个人资料。

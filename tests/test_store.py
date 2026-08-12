@@ -110,6 +110,26 @@ class StoreTest(unittest.TestCase):
             self.assertEqual(checkpoint.header, header)
             self.assertEqual(checkpoint.events, make_log().events)
 
+    def test_checkpoint_accepts_read_only_scan_issue(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            header = CheckpointHeader(1, "preflight-1", "2026-08-12", "preflight", utc(9), None)
+            issue = Event(
+                kind="scan_issue",
+                occurred_at=utc(9, 1),
+                data={
+                    "scan_id": "scan-1",
+                    "photo_id": "photo-8",
+                    "reason": "liker_list_unavailable",
+                    "evidence_summary": "53 likes visible; liker popover empty after one retry",
+                },
+            )
+            begin_checkpoint(root, header)
+
+            append_checkpoint(root, "preflight-1", issue)
+
+            self.assertEqual(read_checkpoint(root, "preflight-1").events, (issue,))
+
     def test_sealed_log_wins_over_retained_checkpoint(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

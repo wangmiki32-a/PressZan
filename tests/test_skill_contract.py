@@ -61,6 +61,7 @@ class SkillContractTest(unittest.TestCase):
             "work_observed",
             "received_like_observed",
             "candidate_observed",
+            "scan_issue",
             "preview_created",
             "onboarding_approved",
             "outgoing_like_confirmed",

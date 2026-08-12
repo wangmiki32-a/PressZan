@@ -98,6 +98,49 @@ def seed_approved_likes(root, count, base_time, daily_task_id):
 
 
 class CliTest(unittest.TestCase):
+    def test_fixed_clock_and_seed_rebuild_status_and_dashboard_deterministically(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            preview = create_preview(root, "2026-08-12T09:00:00+00:00", "p1")
+            self.assertEqual(preview["candidate_plan"][0]["photographer_id"], "p1")
+
+            first_status, first_payload = invoke(
+                root,
+                "status",
+                "--json",
+                "--now",
+                "2026-08-12T12:00:00+00:00",
+            )
+            second_status, second_payload = invoke(
+                root,
+                "status",
+                "--json",
+                "--now",
+                "2026-08-12T12:00:00+00:00",
+            )
+            self.assertEqual(first_status.returncode, 0, first_status.stderr)
+            self.assertEqual(second_status.returncode, 0, second_status.stderr)
+            self.assertEqual(first_payload, second_payload)
+            self.assertEqual(first_payload["today"]["status"], "preflight_ready")
+
+            first_dashboard, first_dashboard_payload = invoke(
+                root,
+                "dashboard",
+                "--now",
+                "2026-08-12T12:00:00+00:00",
+            )
+            first_html = Path(first_dashboard_payload["path"]).read_bytes()
+            second_dashboard, second_dashboard_payload = invoke(
+                root,
+                "dashboard",
+                "--now",
+                "2026-08-12T12:00:00+00:00",
+            )
+            second_html = Path(second_dashboard_payload["path"]).read_bytes()
+            self.assertEqual(first_dashboard.returncode, 0, first_dashboard.stderr)
+            self.assertEqual(second_dashboard.returncode, 0, second_dashboard.stderr)
+            self.assertEqual(first_html, second_html)
+
     def test_dashboard_command_writes_rebuildable_offline_html(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -116,6 +159,16 @@ class CliTest(unittest.TestCase):
             html = output.read_text(encoding="utf-8")
             self.assertIn('"confirmed_likes":25', html)
             self.assertNotIn("https://", html)
+
+            status_result, status_payload = invoke(
+                root,
+                "status",
+                "--json",
+                "--now",
+                "2026-08-12T12:00:00+00:00",
+            )
+            self.assertEqual(status_result.returncode, 0, status_result.stderr)
+            self.assertEqual(status_payload["today"]["status"], "in_progress")
 
     def test_first_run_requires_preflight(self):
         with TemporaryDirectory() as directory:

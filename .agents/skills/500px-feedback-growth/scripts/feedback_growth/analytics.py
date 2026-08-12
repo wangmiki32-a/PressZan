@@ -76,10 +76,17 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
     ordered = []
     run_status = {}
     run_ended = {}
+    preflight_days = set()
+    preview_days = set()
     for log in logs:
-        run_status[log.daily_task_id] = log.status
-        run_ended[log.daily_task_id] = max(run_ended.get(log.daily_task_id, log.ended_at), log.ended_at)
+        if log.mode == "run":
+            run_status[log.daily_task_id] = log.status
+            run_ended[log.daily_task_id] = max(run_ended.get(log.daily_task_id, log.ended_at), log.ended_at)
+        elif log.mode == "preflight":
+            preflight_days.add(log.daily_task_id)
         for index, item in enumerate(log.events):
+            if item.kind == "preview_created":
+                preview_days.add(log.daily_task_id)
             ordered.append((item.occurred_at, log.run_id, index, log.daily_task_id, item))
     ordered.sort(key=lambda row: (row[0], row[1], row[2]))
 
@@ -251,18 +258,33 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
         )
 
     daily_tasks = {}
-    all_days = set(run_status) | set(daily_likes) | set(daily_comments) | set(daily_skips) | set(daily_risks)
+    all_days = set(run_status) | preflight_days | set(daily_likes) | set(daily_comments) | set(daily_skips) | set(daily_risks)
     for day in all_days:
         likes = daily_likes.get(day, [])
         quota_counts = Counter(str(item.data["quota_bucket"]) for item in likes)
         unique = frozenset(str(item.data["photographer_id"]) for item in likes)
+        latest_run_status = run_status.get(day)
+        if len(likes) == 100:
+            task_status = "completed"
+        elif latest_run_status in {"paused_incomplete", "incomplete_candidate_exhausted"}:
+            task_status = latest_run_status
+        elif likes:
+            task_status = "in_progress"
+        elif day in preview_days:
+            task_status = "preflight_ready"
+        elif latest_run_status == "approval_rejected":
+            task_status = latest_run_status
+        elif day in preflight_days:
+            task_status = "preflight_active"
+        else:
+            task_status = "in_progress"
         daily_tasks[day] = DailyTaskStats(
             daily_task_id=day,
             confirmed_likes=len(likes),
             unique_photographer_ids=unique,
             quota_counts=dict(quota_counts),
             confirmed_comments=len(daily_comments.get(day, [])),
-            status=run_status.get(day, "active"),
+            status=task_status,
             completed_at=run_ended.get(day) if len(likes) == 100 else None,
             reinforcement_likes=quota_counts.get("verified_second", 0),
             new_reciprocator_ids=frozenset(),
