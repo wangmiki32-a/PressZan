@@ -1,0 +1,45 @@
+# Markdown 事件 schema
+
+状态根目录默认为项目 `.local/500px-feedback-growth/`。`checkpoints/*.md` 只追加；`runs/*.md` 是 sealed source of truth。每段规范数据使用一个 `json` fenced block，`schema_version` 当前为 `1`。
+
+## 通用格式
+
+```json
+{"kind":"candidate_skipped","occurred_at":"2026-08-12T12:00:00+08:00","data":{"photographer_id":"p1","reason":"all_recent_works_liked"}}
+```
+
+时间必须带时区。通过 CLI `event --run-id <run_id> --kind <kind> --field key=value` 写入；CLI 会把合法 JSON 值解析成数组、对象、数字或布尔值。不要直接编辑已写事件。
+
+## 事件字段
+
+| kind | 必填 data 字段 | 可选字段 |
+|---|---|---|
+| `scan_started` | `scan_id`, `owner_id`, `profile_url` | — |
+| `work_observed` | `scan_id`, `photo_id`, `photo_url`, `position` | — |
+| `received_like_observed` | `scan_id`, `photo_id`, `work_position`, `photographer_id`, `display_name`, `profile_url` | — |
+| `candidate_observed` | `photographer_id`, `display_name`, `profile_url`, `source_photo_id`, `source_url`, `page_order` | — |
+| `preview_created` | `preview_id`, `candidate_digest`, `expires_at`, `seed`, `quota_snapshot`, `candidate_ids`, `candidate_plan` | — |
+| `onboarding_approved` | `preview_id`, `candidate_digest`, `approved_at` | — |
+| `outgoing_like_confirmed` | `action_id`, `photographer_id`, `photo_id`, `photo_url`, `quota_bucket`, `before_state`, `after_state` | — |
+| `outgoing_comment_confirmed` | `action_id`, `photographer_id`, `photo_id`, `content`, `before_state`, `after_state` | — |
+| `feedback_episode_opened` | `episode_id`, `photographer_id`, `touch_action_id`, `expires_at` | — |
+| `feedback_episode_extended` | `episode_id`, `touch_action_id`, `previous_expires_at`, `expires_at` | — |
+| `feedback_episode_succeeded` | `episode_id`, `received_photo_id`, `feedback_first_seen_at`, `received_like_count` | — |
+| `feedback_episode_failed` | `episode_id`, `expired_at` | — |
+| `candidate_skipped` | `photographer_id`, `reason` | `photo_id` |
+| `safety_paused` | `reason`, `page_url`, `evidence_summary`, `last_safe_action_id` | — |
+| `run_finished` | `status`, `confirmed_like_count`, `confirmed_comment_count` | — |
+
+## ID 与自动生命周期
+
+- 点赞 `action_id = sha256(daily_task_id + photographer_id + photo_id + "outgoing_like_confirmed")`。
+- CLI 收到 `outgoing_like_confirmed` 后自动打开或延长 72 小时 episode；不要另外手工写 opened/extended 事件。
+- CLI 收到新的 `received_like_observed` 后自动关闭符合条件的最近 open episode；不要凭页面猜测手工标记成功。
+- 相同 action ID 会被拒绝；sealed run 与保留 checkpoint 同时存在时，重建只采用 sealed run。
+
+## 安全值
+
+- `before_state` / `after_state` 必须来自同一可见控件的前后读取。
+- `quota_bucket` 仅用 `exploit_first`、`retest`、`new`、`verified_second`。
+- `safety_paused.reason` 使用可搜索值：`captcha`、`rate_limit`、`login_lost`、`platform_warning`、`account_mismatch`、`ambiguous_state`。
+- 日志不得包含密码、Cookie、token、local storage、私信正文或无关个人资料。
