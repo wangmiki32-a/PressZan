@@ -20,7 +20,7 @@ description: Use when a user asks to analyze 500px reciprocal likes, preview or 
 | 查看今天进度、暂停和层级 | `status` |
 | 重建本地 HTML | `dashboard` |
 
-执行 `preflight` 或 `run` 前必须完整读取 [浏览器工作流](references/browser-workflow.md)。仅在需要手工追加/排查事件时读取 [事件 schema](references/event-schema.md)。所有命令使用 `python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py`。
+执行 `preflight` 或 `run` 前必须完整读取 [浏览器工作流](references/browser-workflow.md) 和 [运行恢复手册](references/operational-recovery.md)。仅在需要手工追加/排查事件时读取 [事件 schema](references/event-schema.md)。所有命令使用 `python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py`，并显式传入主工作区的 `--state-root`。
 
 ## 通用前置检查
 
@@ -41,7 +41,7 @@ description: Use when a user asks to analyze 500px reciprocal likes, preview or 
 
 1. 再次执行 `status --json`。若内部 `begin --mode run` 返回 `preflight_required`，立即完成完整 `preflight` 并返回预览；不要把原始错误交给用户，也不要互动。
 2. 首次批准时，把公开的 `run --approve <preview_id>` 映射为内部 `begin --mode run --approve-preview <preview_id>`。
-3. 在该运行中重新扫描候选并记录，执行 `approve --run-id <run_id> --preview-id <preview_id>`；仅在响应为 `approved=true` 时继续。
+3. 若批准预览来自同一自然日、仍在 24 小时有效期内、且预览后没有确认互动，走快速复核：读取 preview 的 `candidate_plan`，按 `source_url` 分组，每个来源作品只打开一次；只记录仍在评论区可见的已批准候选及其当前 `page_order`。不要再次扫描自己的 30 幅作品或点赞者列表。随后执行 `approve --run-id <run_id> --preview-id <preview_id>`；仅在响应为 `approved=true` 时继续。
 4. 若返回 `preview_not_latest`、`preview_changed` 或 `preview_expired`，先执行 `finish --run-id <run_id> --status approval_rejected`，自动完成新 `preflight` 并返回替代 preview ID。不得遗留活动 approval checkpoint。
 5. 每位候选只检查最近 12 幅作品，完成最多 25 个页面确认的成功点赞，直到今日累计 100。每日覆盖至少 80 位摄影师；单人最多 2 幅，第二幅只限 verified。默认配额为 45 个 verified/promising 首赞、20 个不确定/复测、15 个新人、最多 20 个 verified 第二赞。
 6. 只有 verified 且本地 7 天内未评论时，才可在当天第一幅成功点赞作品评论一次固定文本“拍的真棒👍”。不得改写或追加内容。
@@ -68,3 +68,6 @@ description: Use when a user asks to analyze 500px reciprocal likes, preview or 
 - 点赞后再统一写日志：崩溃会造成重复；每次确认后立即追加。
 - 将历史点赞者直接标为 verified：基线只能初始化 promising；滚动 30 天内至少 2 次归因回馈才是 verified。
 - 评论链断裂就停止探索：按浏览器工作流从本地高分队列重新播种。
+- 批准后又完整扫描 30 幅作品：这会把分钟级页面加载差异混入候选池，既慢又容易触发 `preview_changed`；同日新鲜预览只复核已批准候选。
+- 把点赞弹层的短暂空白当成零点赞：只读刷新一次，仍为空才记录 `liker_list_unavailable`。
+- 复用写死旧 `run_id` 的临时追加脚本：每次运行必须生成或校验当前 `run_id`、`scan_id` 和主工作区 `state-root`。

@@ -1,4 +1,25 @@
+# 私有运行状态与临时工作树
+.local/
 .worktrees/
-.local/500px-feedback-growth/
+.codex-log/
+
+# 本地凭证与环境配置
+.env
+.env.*
+!.env.example
+
+# Python 缓存、测试产物与虚拟环境
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# macOS 与编辑器本地产物
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -246,6 +246,65 @@ class CliTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertEqual(payload["code"], "preview_changed")
 
+    def test_approval_accepts_exact_selected_candidates_without_full_pool_replay(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, preflight = invoke(root, "begin", "--mode", "preflight", "--now", "2026-08-12T09:00:00+00:00")
+            for index in range(30):
+                add_candidate(root, preflight["run_id"], identifier=f"p{index:02}", page_order=index + 1)
+            _, preview = invoke(
+                root,
+                "preview",
+                "--run-id",
+                preflight["run_id"],
+                "--seed",
+                "8122026",
+                "--now",
+                "2026-08-12T09:00:00+00:00",
+            )
+            invoke(
+                root,
+                "finish",
+                "--run-id",
+                preflight["run_id"],
+                "--status",
+                "completed",
+                "--now",
+                "2026-08-12T09:01:00+00:00",
+            )
+            _, run = invoke(
+                root,
+                "begin",
+                "--mode",
+                "run",
+                "--approve-preview",
+                preview["preview_id"],
+                "--now",
+                "2026-08-12T10:00:00+00:00",
+            )
+            for candidate in reversed(preview["candidate_plan"]):
+                add_candidate(
+                    root,
+                    run["run_id"],
+                    identifier=candidate["photographer_id"],
+                    page_order=candidate["page_order"],
+                )
+
+            result, payload = invoke(
+                root,
+                "approve",
+                "--run-id",
+                run["run_id"],
+                "--preview-id",
+                preview["preview_id"],
+                "--now",
+                "2026-08-12T10:00:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(payload["approved"])
+            self.assertEqual(payload["candidate_plan"], preview["candidate_plan"])
+
     def test_approval_rejects_valid_but_older_preview(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

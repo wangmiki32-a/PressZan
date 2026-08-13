@@ -15,6 +15,16 @@
 
 ## Run：候选链
 
+### 批准快速复核
+
+1. 仅当 preview 属于同一 `daily_task_id`、未过期、且 preview 后确认点赞仍为 0 时使用。
+2. 从已封存 preview 读取 25 位 `candidate_plan`，按 `source_url` 分组。每个来源作品只打开一次，先等待评论区稳定，再读取 `/community/user-details/` 链接。
+3. 只为已批准且仍可见的候选追加 `candidate_observed`；`display_name`、`profile_url` 和 `page_order` 来自当前页面。不要把页面上的其他评论者加入本次 run checkpoint，也不要再次打开点赞者弹层。
+4. 候选缺失、顺序变化或配额变化时让 `approve` 返回 `preview_changed`。不得为了匹配 digest 抄写旧观察或伪造当前 `page_order`。
+5. 快速复核通常只访问约 10–15 个来源页；不要重复完整 30 幅 preflight。完整回馈扫描由 preflight 负责。
+
+### 点赞执行
+
 1. 优先选择当前评论区尚未访问且采样得分最高的人；得分差不超过 0.05 时选择页面中的第一位。评论链不足时从本地高分队列重新播种。
 2. 打开候选主页后只检查最近 12 幅作品，按当前从新到旧打开第一幅 visibly unliked 的作品。若 12 幅全部已点赞，记录 `candidate_skipped`，原因 `all_recent_works_liked`，不消耗额度。
 3. 点赞前读取并记录 `before_state=not_liked`。点击一次后重新读取同一控件；仅在 `after_state=liked` 可见时记录 `outgoing_like_confirmed`。若状态不明确，不重按，按硬停止处理。
@@ -23,7 +33,7 @@
 
 ## 回馈更新
 
-1. 每次 preflight/run 开始时重新扫描个人最近 30 幅作品的点赞来源。
+1. 每次 preflight 扫描个人最近 30 幅作品的点赞来源；run 使用同日且未发生后续确认互动的 fresh preview。条件不满足时先生成新 preflight，不在 approval run 内重复 30 幅扫描。
 2. 仅当新 liker pair 的首次观察时间晚于该摄影师最近一次触达，且不超过其 72 小时 episode expiry，才记 `feedback_episode_succeeded`。
 3. 同一摄影师在同一窗口点赞多幅作品只记一个独立回馈者；额外作品只增加该 episode 的收到点赞数。报告统一称“归因回馈”。
 
@@ -33,3 +43,5 @@
 - 出现 CAPTCHA、限频、登录失效、平台警告、账号不匹配或任何点赞/评论状态不明确时，立即记录 `safety_paused`、最后安全 action ID、页面 URL 和可见证据摘要，然后停止。
 - 不解决 CAPTCHA，不规避限频，不切换账号，不盲点坐标，不用搜索引擎代替登录页面。
 - 恢复时先 `status --json`，再 `resume --run-id <run_id>`，从最后一个确认事件继续。
+- 评论区历史上有候选但首次读取为 0 时，只刷新一次并重新读取；候选读取必须先于点赞弹层操作，避免弹层遮挡或异步加载造成假空白。
+- 点赞数字大于 0 但弹层条目为 0 时，只刷新一次再读；成功补读只追加点赞者，不重复追加候选。

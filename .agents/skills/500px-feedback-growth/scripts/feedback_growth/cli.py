@@ -351,14 +351,24 @@ def command_approve(args) -> int:
     state = rebuild_state(load_effective_runs(root), now)
     if _quota_snapshot(state, now) != preview.data["quota_snapshot"]:
         return _error("preview_changed")
-    regenerated = select_batch(
-        _candidates(checkpoint, state),
-        state,
-        now,
-        int(preview.data["seed"]),
-        BATCH_TARGET,
+    observed = {item.photographer_id: item for item in _candidates(checkpoint, state)}
+    plan = list(preview.data["candidate_plan"])
+    stable_fields = (
+        "photographer_id",
+        "display_name",
+        "profile_url",
+        "source_photo_id",
+        "source_url",
+        "page_order",
+        "tier",
     )
-    plan = list(regenerated.selected)
+    for expected in plan:
+        current = observed.get(str(expected["photographer_id"]))
+        if current is None:
+            return _error("preview_changed")
+        actual = {field: getattr(current, field) for field in stable_fields}
+        if any(actual[field] != expected[field] for field in stable_fields):
+            return _error("preview_changed")
     digest = _digest(plan)
     if digest != preview.data["candidate_digest"]:
         return _error("preview_changed")
