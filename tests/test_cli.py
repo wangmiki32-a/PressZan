@@ -201,6 +201,76 @@ class CliTest(unittest.TestCase):
             self.assertEqual(len(binding), 1)
             self.assertEqual(binding[0].data["baseline_digest"], completed["baseline_digest"])
 
+    def test_cycle_like_complete_atomically_creates_two_schedule_intents(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            begun = self._begin_cycle(root)
+            common = ("--run-id", begun["run_id"], "--cycle-id", "c1", "--now", "2026-08-14T09:01:00+00:00")
+            _, frozen = invoke(root, "cycle-showcase-freeze", *common, "--owner-id", "owner-1")
+            invoke(root, "cycle-baseline-start", *common, "--scan-id", "scan-1")
+            for photo_id in frozen["photo_ids"]:
+                invoke(root, "cycle-baseline-photo-complete", *common, "--scan-id", "scan-1", "--photo-id", photo_id, "--liker-count", "0")
+            result, _ = invoke(root, "cycle-baseline-complete", *common, "--scan-id", "scan-1")
+            self.assertEqual(result.returncode, 0)
+            invoke(root, "finish", "--run-id", begun["run_id"], "--status", "completed", "--now", "2026-08-14T09:02:00+00:00")
+            seed_approved_likes(root, 0, dt(14, 8), "2026-08-14")
+            _, like_run = invoke(root, "begin", "--mode", "run", "--cycle-id", "c1", "--now", "2026-08-14T09:03:00+00:00")
+            action_id = deterministic_action_id("2026-08-14", "p1", "photo-1", "outgoing_like_confirmed")
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id",
+                like_run["run_id"],
+                "--kind",
+                "outgoing_like_confirmed",
+                "--field",
+                f"action_id={action_id}",
+                "--field",
+                "photographer_id=p1",
+                "--field",
+                "photo_id=photo-1",
+                "--field",
+                "photo_url=https://example.test/photo-1",
+                "--field",
+                "quota_bucket=new",
+                "--field",
+                "before_state=not_liked",
+                "--field",
+                "after_state=liked",
+                "--now",
+                "2026-08-14T09:04:00+00:00",
+            )
+            self.assertEqual(result.returncode, 0, payload)
+            invoke(root, "finish", "--run-id", like_run["run_id"], "--status", "incomplete_candidate_exhausted", "--now", "2026-08-14T09:05:00+00:00")
+            _, transaction = invoke(root, "begin", "--mode", "cycle", "--cycle-id", "c1", "--now", "2026-08-14T09:06:00+00:00")
+
+            result, completed = invoke(
+                root,
+                "cycle-like-complete",
+                "--run-id",
+                transaction["run_id"],
+                "--cycle-id",
+                "c1",
+                "--mapped-run-id",
+                like_run["run_id"],
+                "--status",
+                "incomplete_candidate_exhausted",
+                "--now",
+                "2026-08-14T09:06:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, completed)
+            self.assertEqual(completed["like_completed_at"], "2026-08-14T09:04:00+00:00")
+            self.assertEqual(
+                [item["due_at"] for item in completed["review_requests"]],
+                ["2026-08-15T05:04:00+00:00", "2026-08-17T07:04:00+00:00"],
+            )
+            checkpoint = read_checkpoint(root, transaction["run_id"])
+            self.assertEqual(
+                [item.kind for item in checkpoint.events],
+                ["cycle_like_completed", "review_schedule_requested", "review_schedule_requested"],
+            )
+
     def test_review_checkpoint_resumes_across_shanghai_midnight(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

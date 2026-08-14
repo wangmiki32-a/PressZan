@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from . import SCHEMA_VERSION
 from .analytics import WINDOW, classify_photographer, rebuild_state
+from .automation import build_review_request, build_review_requests
 from .dashboard import generate_dashboard
 from .model import Candidate, CheckpointHeader, Event, RunLog
 from .selector import DAILY_TARGET, select_run_candidates
@@ -688,6 +689,149 @@ def command_cycle_status(args) -> int:
     return 0
 
 
+def _sealed_runs_by_id(root: Path) -> Mapping[str, RunLog]:
+    return {log.run_id: log for log in iter_sealed_logs(root)}
+
+
+def _schedule_event(request, root: Path, now: datetime) -> Event:
+    return Event(
+        "review_schedule_requested",
+        now,
+        {
+            "cycle_id": request.cycle_id,
+            "review_kind": request.review_kind,
+            "attempt": request.attempt,
+            "due_at": request.due_at.isoformat(),
+            "state_root": str(root.resolve()),
+            "automation_name": request.name,
+            "payload_digest": request.payload_digest,
+        },
+    )
+
+
+def command_cycle_like_complete(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    if checkpoint.header.mode != "cycle":
+        return _error("cycle_transaction_required")
+    mapped_ids = tuple(dict.fromkeys(args.mapped_run_id))
+    if not mapped_ids:
+        return _error("mapped_run_required")
+    sealed = _sealed_runs_by_id(root)
+    missing = [run_id for run_id in mapped_ids if run_id not in sealed]
+    if missing:
+        return _error("mapped_run_not_sealed", run_ids=missing)
+    run_events = [item for run_id in mapped_ids for item in sealed[run_id].events]
+    for mapped_id in mapped_ids:
+        bindings = [
+            item for item in sealed[mapped_id].events
+            if item.kind == "cycle_run_bound" and item.data["cycle_id"] == args.cycle_id
+        ]
+        if len(bindings) != 1:
+            return _error("mapped_run_not_bound", run_id=mapped_id)
+    likes = [item for item in run_events if item.kind == "outgoing_like_confirmed"]
+    if not likes:
+        return _error("cycle_has_no_confirmed_likes")
+    if args.status not in {"completed", "incomplete_candidate_exhausted"}:
+        return _error("cycle_not_schedulable", status=args.status)
+    action_ids = [str(item.data["action_id"]) for item in likes]
+    episode_ids = [
+        str(item.data["episode_id"])
+        for item in run_events
+        if item.kind in {"feedback_episode_opened", "feedback_episode_extended"}
+        and item.data["touch_action_id"] in action_ids
+    ]
+    episode_ids = list(dict.fromkeys(episode_ids))
+    like_completed_at = max(item.occurred_at for item in likes)
+    requests = build_review_requests(args.cycle_id, like_completed_at, root)
+    additions = [
+        Event(
+            "cycle_like_completed",
+            now,
+            {
+                "cycle_id": args.cycle_id,
+                "mapped_run_ids": list(mapped_ids),
+                "touch_action_ids": action_ids,
+                "episode_ids": episode_ids,
+                "like_completed_at": like_completed_at.isoformat(),
+                "terminal_status": args.status,
+            },
+        )
+    ] + [_schedule_event(request, root, now) for request in requests]
+    append_checkpoint_events(root, args.run_id, additions)
+    _json({
+        "ok": True,
+        "cycle_id": args.cycle_id,
+        "like_completed_at": like_completed_at.isoformat(),
+        "confirmed_likes": len(likes),
+        "review_requests": [request.payload for request in requests],
+        "review_request_digests": [request.payload_digest for request in requests],
+    })
+    return 0
+
+
+def command_review_schedule_intent(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    state = rebuild_state(load_effective_runs(root), now)
+    cycle = state.cycles.get(args.cycle_id)
+    if cycle is None or cycle.like_completed_at is None:
+        return _error("cycle_like_not_completed")
+    request = build_review_request(args.cycle_id, args.review_kind, args.attempt, cycle.like_completed_at, root)
+    existing = [
+        item for item in _cycle_events(load_effective_runs(root), args.cycle_id)
+        if item.kind == "review_schedule_requested"
+        and item.data["review_kind"] == args.review_kind
+        and int(item.data["attempt"]) == args.attempt
+    ]
+    if existing:
+        if existing[-1].data["payload_digest"] != request.payload_digest:
+            return _error("schedule_payload_mismatch")
+        _json({"ok": True, "duplicate": True, "request": request.payload, "payload_digest": request.payload_digest})
+        return 0
+    append_checkpoint_events(root, args.run_id, (_schedule_event(request, root, now),))
+    _json({"ok": True, "duplicate": False, "request": request.payload, "payload_digest": request.payload_digest})
+    return 0
+
+
+def command_review_schedule_bind(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    events = _cycle_events(load_effective_runs(root), args.cycle_id)
+    intents = [
+        item for item in events
+        if item.kind == "review_schedule_requested"
+        and item.data["review_kind"] == args.review_kind
+        and int(item.data["attempt"]) == args.attempt
+    ]
+    if not intents:
+        return _error("schedule_intent_not_found")
+    if intents[-1].data["payload_digest"] != args.payload_digest:
+        return _error("schedule_payload_mismatch")
+    binds = [
+        item for item in events
+        if item.kind == "review_scheduled"
+        and item.data["review_kind"] == args.review_kind
+        and int(item.data["attempt"]) == args.attempt
+    ]
+    if binds:
+        same = binds[-1].data["automation_id"] == args.automation_id and binds[-1].data["payload_digest"] == args.payload_digest
+        if not same:
+            return _error("schedule_binding_conflict")
+        _json({"ok": True, "duplicate": True, "automation_id": args.automation_id})
+        return 0
+    append_checkpoint_events(
+        root,
+        args.run_id,
+        (Event("review_scheduled", now, {"cycle_id": args.cycle_id, "review_kind": args.review_kind, "attempt": args.attempt, "automation_id": args.automation_id, "payload_digest": args.payload_digest}),),
+    )
+    _json({"ok": True, "duplicate": False, "automation_id": args.automation_id})
+    return 0
+
+
 def command_preview(args) -> int:
     root = _state_root(args.state_root)
     now = _now(args.now)
@@ -955,6 +1099,29 @@ def build_parser() -> argparse.ArgumentParser:
     cycle_status.add_argument("--json", action="store_true")
     _add_common(cycle_status)
 
+    cycle_like = commands.add_parser("cycle-like-complete")
+    cycle_like.add_argument("--run-id", required=True)
+    cycle_like.add_argument("--cycle-id", required=True)
+    cycle_like.add_argument("--mapped-run-id", action="append", default=[], required=True)
+    cycle_like.add_argument("--status", required=True)
+    _add_common(cycle_like)
+
+    schedule_intent = commands.add_parser("review-schedule-intent")
+    schedule_intent.add_argument("--run-id", required=True)
+    schedule_intent.add_argument("--cycle-id", required=True)
+    schedule_intent.add_argument("--review-kind", choices=("review_1d", "review_3d"), required=True)
+    schedule_intent.add_argument("--attempt", type=int, required=True)
+    _add_common(schedule_intent)
+
+    schedule_bind = commands.add_parser("review-schedule-bind")
+    schedule_bind.add_argument("--run-id", required=True)
+    schedule_bind.add_argument("--cycle-id", required=True)
+    schedule_bind.add_argument("--review-kind", choices=("review_1d", "review_3d"), required=True)
+    schedule_bind.add_argument("--attempt", type=int, required=True)
+    schedule_bind.add_argument("--automation-id", required=True)
+    schedule_bind.add_argument("--payload-digest", required=True)
+    _add_common(schedule_bind)
+
     preview = commands.add_parser("preview")
     preview.add_argument("--run-id", required=True)
     preview.add_argument("--seed", type=int, required=True)
@@ -1000,6 +1167,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "cycle-baseline-photo-complete": command_cycle_baseline_photo_complete,
         "cycle-baseline-complete": command_cycle_baseline_complete,
         "cycle-status": command_cycle_status,
+        "cycle-like-complete": command_cycle_like_complete,
+        "review-schedule-intent": command_review_schedule_intent,
+        "review-schedule-bind": command_review_schedule_bind,
         "preview": command_preview,
         "latest-preview": command_latest_preview,
         "approve": command_approve,
