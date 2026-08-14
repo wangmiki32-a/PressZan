@@ -104,6 +104,42 @@ def seed_approved_likes(root, count, base_time, daily_task_id, *, offset=0, run_
     )
 
 
+def seed_scheduled_cycle(root, due_at, cycle_id="c1", review_kind="review_3d"):
+    started = due_at - timedelta(hours=71)
+    photo_ids = [f"work-{index}" for index in range(1, 6)]
+    events = (
+        Event("cycle_started", started, {"cycle_id": cycle_id, "attribution_eligible": True}),
+        Event("cycle_showcase_frozen", started, {"cycle_id": cycle_id, "photo_ids": photo_ids, "showcase_digest": "showcase"}),
+        Event("cycle_baseline_completed", started, {"cycle_id": cycle_id, "scan_id": "baseline", "baseline_digest": "baseline"}),
+        Event(
+            "cycle_like_completed",
+            started + timedelta(hours=1),
+            {
+                "cycle_id": cycle_id,
+                "mapped_run_ids": ["legacy-like-run"],
+                "touch_action_ids": [],
+                "episode_ids": [],
+                "like_completed_at": (started + timedelta(hours=1)).isoformat(),
+                "terminal_status": "completed",
+            },
+        ),
+        Event(
+            "review_schedule_requested",
+            started + timedelta(hours=1),
+            {
+                "cycle_id": cycle_id,
+                "review_kind": review_kind,
+                "attempt": 1,
+                "due_at": due_at.isoformat(),
+                "state_root": str(root.resolve()),
+                "automation_name": f"500px-review-{cycle_id}-{review_kind}-1",
+                "payload_digest": "digest",
+            },
+        ),
+    )
+    seal_run(root, RunLog(1, f"cycle-seed-{cycle_id}", started.date().isoformat(), "cycle", "completed", started, events[-1].occurred_at, events))
+
+
 class CliTest(unittest.TestCase):
     def _begin_cycle(self, root, cycle_id="c1", count=5):
         now = "2026-08-14T09:00:00+00:00"
@@ -274,6 +310,7 @@ class CliTest(unittest.TestCase):
     def test_review_checkpoint_resumes_across_shanghai_midnight(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
+            seed_scheduled_cycle(root, datetime.fromisoformat("2026-08-14T15:40:00+00:00"))
             result, begun = invoke(
                 root,
                 "begin",
@@ -306,6 +343,7 @@ class CliTest(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             seed_approved_likes(root, 0, dt(14, 8), "2026-08-14")
+            seed_scheduled_cycle(root, datetime.fromisoformat("2026-08-14T09:00:00+00:00"))
             result, run_begun = invoke(
                 root, "begin", "--mode", "run", "--now", "2026-08-14T09:00:00+00:00"
             )
@@ -328,6 +366,92 @@ class CliTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, review_begun)
             self.assertNotEqual(review_begun["run_id"], run_begun["run_id"])
+
+    def test_review_records_exactly_frozen_five_and_finishes(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            due = datetime.fromisoformat("2026-08-14T09:00:00+00:00")
+            seed_scheduled_cycle(root, due)
+            result, begun = invoke(
+                root,
+                "begin",
+                "--mode",
+                "review",
+                "--cycle-id",
+                "c1",
+                "--review-kind",
+                "review_3d",
+                "--attempt",
+                "1",
+                "--now",
+                due.isoformat(),
+            )
+            self.assertEqual(result.returncode, 0, begun)
+
+            result, payload = invoke(
+                root,
+                "review-photo-observe",
+                "--run-id",
+                begun["run_id"],
+                "--cycle-id",
+                "c1",
+                "--review-kind",
+                "review_3d",
+                "--attempt",
+                "1",
+                "--scan-id",
+                "review-scan",
+                "--photo-id",
+                "outside",
+                "--liker-count",
+                "0",
+                "--now",
+                due.isoformat(),
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "photo_not_in_showcase")
+
+            for photo_id in [f"work-{index}" for index in range(1, 6)]:
+                result, payload = invoke(
+                    root,
+                    "review-photo-observe",
+                    "--run-id",
+                    begun["run_id"],
+                    "--cycle-id",
+                    "c1",
+                    "--review-kind",
+                    "review_3d",
+                    "--attempt",
+                    "1",
+                    "--scan-id",
+                    "review-scan",
+                    "--photo-id",
+                    photo_id,
+                    "--liker-count",
+                    "0",
+                    "--now",
+                    due.isoformat(),
+                )
+                self.assertEqual(result.returncode, 0, payload)
+
+            result, payload = invoke(
+                root,
+                "review-finish",
+                "--run-id",
+                begun["run_id"],
+                "--cycle-id",
+                "c1",
+                "--review-kind",
+                "review_3d",
+                "--attempt",
+                "1",
+                "--scan-id",
+                "review-scan",
+                "--now",
+                due.isoformat(),
+            )
+            self.assertEqual(result.returncode, 0, payload)
+            self.assertEqual(payload["observed_photo_count"], 5)
 
     def test_cycle_begin_requires_cycle_id(self):
         with TemporaryDirectory() as directory:

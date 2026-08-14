@@ -272,6 +272,21 @@ def command_begin(args) -> int:
     if args.mode == "run" and not args.approve_preview and not _events_have_approval(effective):
         return _error("preflight_required")
     state = rebuild_state(effective, now)
+    review_due_at = None
+    if args.mode == "review":
+        cycle = state.cycles.get(args.cycle_id)
+        if cycle is None:
+            return _error("cycle_not_found")
+        slot = cycle.review_1d if args.review_kind == "review_1d" else cycle.review_3d
+        attempts = [item for item in slot.attempts if item.attempt == args.attempt]
+        if not attempts:
+            return _error("review_not_scheduled")
+        review_attempt = attempts[-1]
+        if review_attempt.status in {"completed", "superseded"}:
+            return _error("review_already_resolved", status=review_attempt.status)
+        if now < review_attempt.due_at:
+            return _error("review_not_due", due_at=review_attempt.due_at.isoformat())
+        review_due_at = review_attempt.due_at
     if args.mode == "run" and args.cycle_id:
         cycle = state.cycles.get(args.cycle_id)
         if cycle is None:
@@ -321,6 +336,24 @@ def command_begin(args) -> int:
                         "run_id": run_id,
                         "baseline_digest": digest,
                         "bound_at": now.isoformat(),
+                    },
+                ),
+            ),
+        )
+    if args.mode == "review":
+        append_checkpoint_events(
+            root,
+            run_id,
+            (
+                Event(
+                    "review_started",
+                    now,
+                    {
+                        "cycle_id": args.cycle_id,
+                        "review_kind": args.review_kind,
+                        "attempt": args.attempt,
+                        "due_at": review_due_at.isoformat(),
+                        "started_at": now.isoformat(),
                     },
                 ),
             ),
@@ -832,6 +865,143 @@ def command_review_schedule_bind(args) -> int:
     return 0
 
 
+def _require_review_checkpoint(root: Path, args):
+    checkpoint = read_checkpoint(root, args.run_id)
+    expected = {
+        "cycle_id": args.cycle_id,
+        "review_kind": args.review_kind,
+        "attempt": str(args.attempt),
+    }
+    if checkpoint.header.mode != "review" or dict(checkpoint.header.transaction_context) != expected:
+        raise CliError("review_context_mismatch")
+    return checkpoint
+
+
+def command_review_photo_observe(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_review_checkpoint(root, args)
+    state = rebuild_state(load_effective_runs(root), now)
+    cycle = state.cycles.get(args.cycle_id)
+    if cycle is None:
+        return _error("cycle_not_found")
+    if args.photo_id not in cycle.showcase_photo_ids:
+        return _error("photo_not_in_showcase")
+    photographer_ids = list(dict.fromkeys(args.photographer_id))
+    if len(photographer_ids) != len(args.photographer_id):
+        return _error("duplicate_photographer_id")
+    if args.liker_count != len(photographer_ids):
+        return _error("liker_count_mismatch", observed=len(photographer_ids))
+    prior = [
+        item for item in checkpoint.events
+        if item.kind == "review_photo_observed" and item.data["photo_id"] == args.photo_id
+    ]
+    if prior:
+        same = (
+            prior[-1].data["scan_id"] == args.scan_id
+            and prior[-1].data["photographer_ids"] == photographer_ids
+        )
+        if not same:
+            return _error("review_photo_conflict")
+        _json({"ok": True, "duplicate": True, "photo_id": args.photo_id})
+        return 0
+    append_checkpoint_events(
+        root,
+        args.run_id,
+        (
+            Event(
+                "review_photo_observed",
+                now,
+                {
+                    "cycle_id": args.cycle_id,
+                    "review_kind": args.review_kind,
+                    "attempt": args.attempt,
+                    "scan_id": args.scan_id,
+                    "photo_id": args.photo_id,
+                    "photographer_ids": photographer_ids,
+                    "observed_at": now.isoformat(),
+                },
+            ),
+        ),
+    )
+    _json({"ok": True, "duplicate": False, "photo_id": args.photo_id, "liker_count": args.liker_count})
+    return 0
+
+
+def command_review_finish(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_review_checkpoint(root, args)
+    state = rebuild_state(load_effective_runs(root), now)
+    cycle = state.cycles.get(args.cycle_id)
+    if cycle is None:
+        return _error("cycle_not_found")
+    observed = {
+        str(item.data["photo_id"])
+        for item in checkpoint.events
+        if item.kind == "review_photo_observed"
+    }
+    missing = set(cycle.showcase_photo_ids) - observed
+    if missing:
+        return _error("review_incomplete", missing_photo_ids=sorted(missing))
+    additions = [
+        Event(
+            "review_completed",
+            now,
+            {
+                "cycle_id": args.cycle_id,
+                "review_kind": args.review_kind,
+                "attempt": args.attempt,
+                "scan_id": args.scan_id,
+                "completed_at": now.isoformat(),
+            },
+        )
+    ]
+    if args.review_kind == "review_3d" and cycle.review_1d.status not in {"completed", "superseded"}:
+        pending = cycle.review_1d.attempts[-1] if cycle.review_1d.attempts else None
+        if pending is not None:
+            additions.append(
+                Event(
+                    "review_superseded",
+                    now,
+                    {
+                        "cycle_id": args.cycle_id,
+                        "review_kind": "review_1d",
+                        "attempt": pending.attempt,
+                        "superseded_at": now.isoformat(),
+                    },
+                )
+            )
+    append_checkpoint_events(root, args.run_id, additions)
+    _json({"ok": True, "cycle_id": args.cycle_id, "review_kind": args.review_kind, "observed_photo_count": len(observed)})
+    return 0
+
+
+def command_review_fail(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    _require_review_checkpoint(root, args)
+    append_checkpoint_events(
+        root,
+        args.run_id,
+        (
+            Event(
+                "review_failed",
+                now,
+                {
+                    "cycle_id": args.cycle_id,
+                    "review_kind": args.review_kind,
+                    "attempt": args.attempt,
+                    "reason": args.reason,
+                    "failed_at": now.isoformat(),
+                },
+            ),
+        ),
+    )
+    _json({"ok": True, "failed": True, "reason": args.reason})
+    return 0
+
+
 def command_preview(args) -> int:
     root = _state_root(args.state_root)
     now = _now(args.now)
@@ -1122,6 +1292,33 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_bind.add_argument("--payload-digest", required=True)
     _add_common(schedule_bind)
 
+    review_photo = commands.add_parser("review-photo-observe")
+    review_photo.add_argument("--run-id", required=True)
+    review_photo.add_argument("--cycle-id", required=True)
+    review_photo.add_argument("--review-kind", choices=("review_1d", "review_3d"), required=True)
+    review_photo.add_argument("--attempt", type=int, required=True)
+    review_photo.add_argument("--scan-id", required=True)
+    review_photo.add_argument("--photo-id", required=True)
+    review_photo.add_argument("--liker-count", type=int, required=True)
+    review_photo.add_argument("--photographer-id", action="append", default=[])
+    _add_common(review_photo)
+
+    review_finish = commands.add_parser("review-finish")
+    review_finish.add_argument("--run-id", required=True)
+    review_finish.add_argument("--cycle-id", required=True)
+    review_finish.add_argument("--review-kind", choices=("review_1d", "review_3d"), required=True)
+    review_finish.add_argument("--attempt", type=int, required=True)
+    review_finish.add_argument("--scan-id", required=True)
+    _add_common(review_finish)
+
+    review_fail = commands.add_parser("review-fail")
+    review_fail.add_argument("--run-id", required=True)
+    review_fail.add_argument("--cycle-id", required=True)
+    review_fail.add_argument("--review-kind", choices=("review_1d", "review_3d"), required=True)
+    review_fail.add_argument("--attempt", type=int, required=True)
+    review_fail.add_argument("--reason", required=True)
+    _add_common(review_fail)
+
     preview = commands.add_parser("preview")
     preview.add_argument("--run-id", required=True)
     preview.add_argument("--seed", type=int, required=True)
@@ -1170,6 +1367,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "cycle-like-complete": command_cycle_like_complete,
         "review-schedule-intent": command_review_schedule_intent,
         "review-schedule-bind": command_review_schedule_bind,
+        "review-photo-observe": command_review_photo_observe,
+        "review-finish": command_review_finish,
+        "review-fail": command_review_fail,
         "preview": command_preview,
         "latest-preview": command_latest_preview,
         "approve": command_approve,
