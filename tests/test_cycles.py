@@ -7,6 +7,7 @@ import unittest
 from tests import bootstrap  # noqa: F401
 from feedback_growth.model import CheckpointHeader, RunLog
 from feedback_growth.analytics import rebuild_state
+from feedback_growth.cycles import rebuild_cycles
 from feedback_growth.store import (
     LogValidationError,
     begin_checkpoint,
@@ -109,6 +110,26 @@ def cycle_run(*, with_feedback=False):
 
 
 class CycleSchemaTest(unittest.TestCase):
+    def test_migrated_historical_review_can_precede_cycle_registration_time(self):
+        touch_at = dt(13, 7)
+        cycle_created = dt(14, 13)
+        review_at = dt(14, 2)
+        photo_ids = [f"work-{index}" for index in range(1, 6)]
+        events = [
+            event("cycle_started", cycle_created, cycle_id="c1", attribution_eligible=True),
+            event("cycle_showcase_frozen", cycle_created, cycle_id="c1", photo_ids=photo_ids, showcase_digest="d"),
+            event("cycle_like_completed", cycle_created, cycle_id="c1", mapped_run_ids=["r1"], touch_action_ids=[], episode_ids=[], like_completed_at=touch_at.isoformat(), terminal_status="completed"),
+            event("review_schedule_requested", cycle_created, cycle_id="c1", review_kind="review_1d", attempt=1, due_at=(touch_at + timedelta(hours=20)).isoformat(), state_root="/tmp/state", automation_name="review", payload_digest="d"),
+            event("review_started", review_at, cycle_id="c1", review_kind="review_1d", attempt=1, due_at=(touch_at + timedelta(hours=20)).isoformat(), started_at=review_at.isoformat()),
+        ]
+        for photo_id in photo_ids:
+            events.append(event("review_photo_observed", review_at, cycle_id="c1", review_kind="review_1d", attempt=1, scan_id="s1", photo_id=photo_id, photographer_ids=[], observed_at=review_at.isoformat()))
+        events.append(event("review_completed", review_at, cycle_id="c1", review_kind="review_1d", attempt=1, scan_id="s1", completed_at=review_at.isoformat()))
+
+        cycles = rebuild_cycles((run(events),), {}, cycle_created)
+
+        self.assertEqual(cycles["c1"].review_1d.status, "completed")
+
     def test_cycle_event_keeps_old_touch_event_valid(self):
         render_run_log(run([confirmed_like("a1", "p1", dt())]))
         render_run_log(

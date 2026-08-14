@@ -103,13 +103,17 @@ def rebuild_cycles(
                 )
     ordered.sort(key=lambda row: (row[0], row[1], row[2]))
 
+    for occurred_at, _run_id, _index, _reference, item in ordered:
+        if item.kind != "cycle_started":
+            continue
+        cycle_id = str(item.data["cycle_id"])
+        if cycle_id in cycles:
+            raise ValueError(f"duplicate cycle_started {cycle_id}")
+        cycles[cycle_id] = _Cycle(cycle_id, bool(item.data["attribution_eligible"]), occurred_at)
+
     for occurred_at, _run_id, _index, reference, item in ordered:
         data = item.data
         if item.kind == "cycle_started":
-            cycle_id = str(data["cycle_id"])
-            if cycle_id in cycles:
-                raise ValueError(f"duplicate cycle_started {cycle_id}")
-            cycles[cycle_id] = _Cycle(cycle_id, bool(data["attribution_eligible"]), occurred_at)
             continue
         cycle_id = str(data.get("cycle_id", ""))
         if not cycle_id or cycle_id not in cycles:
