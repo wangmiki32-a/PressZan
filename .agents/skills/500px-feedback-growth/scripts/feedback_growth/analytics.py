@@ -74,13 +74,16 @@ def _immutable_episode(episode: _Episode) -> FeedbackEpisode:
 
 def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
     ordered = []
-    run_status = {}
+    run_status: Dict[str, Tuple[datetime, str, str]] = {}
     run_ended = {}
     preflight_days = set()
     preview_days = set()
     for log in logs:
         if log.mode == "run":
-            run_status[log.daily_task_id] = log.status
+            candidate_status = (log.ended_at, log.run_id, log.status)
+            previous_status = run_status.get(log.daily_task_id)
+            if previous_status is None or candidate_status[:2] > previous_status[:2]:
+                run_status[log.daily_task_id] = candidate_status
             run_ended[log.daily_task_id] = max(run_ended.get(log.daily_task_id, log.ended_at), log.ended_at)
         elif log.mode == "preflight":
             preflight_days.add(log.daily_task_id)
@@ -263,7 +266,7 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
         likes = daily_likes.get(day, [])
         quota_counts = Counter(str(item.data["quota_bucket"]) for item in likes)
         unique = frozenset(str(item.data["photographer_id"]) for item in likes)
-        latest_run_status = run_status.get(day)
+        latest_run_status = run_status[day][2] if day in run_status else None
         if len(likes) == 100:
             task_status = "completed"
         elif latest_run_status in {"paused_incomplete", "incomplete_candidate_exhausted"}:
@@ -287,8 +290,6 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
             status=task_status,
             completed_at=run_ended.get(day) if len(likes) == 100 else None,
             reinforcement_likes=quota_counts.get("verified_second", 0),
-            new_reciprocator_ids=frozenset(),
-            tier_changes=(),
             skip_counts=dict(daily_skips.get(day, {})),
             risk_events=tuple(daily_risks.get(day, [])),
         )
@@ -349,8 +350,11 @@ def beta_parameters(stats: PhotographerStats, now: datetime) -> Tuple[float, flo
 
 def matured_cohort_counts(state: AggregateState, now: datetime) -> Tuple[int, int]:
     start = now - ROLLING
-    cutoff = now - WINDOW
-    touches = [touch for touch in state.outgoing_touches if start <= touch.occurred_at <= cutoff]
+    touches = [
+        touch
+        for touch in state.outgoing_touches
+        if start <= touch.occurred_at <= now and state.episodes[touch.episode_id].expires_at <= now
+    ]
     successful = {
         touch.photographer_id
         for touch in touches

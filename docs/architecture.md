@@ -36,6 +36,8 @@ flowchart LR
 
 `dashboard.py` 从同一聚合状态生成自包含 HTML。Dashboard 不加载远程资源，不保存独立业务状态，也不能反向修改日志。
 
+Dashboard 的回顾基线是最近一个产生确认点赞的执行日，而不是生成页面时的自然日。只有 preflight、没有确认点赞的日期不会覆盖最近执行；下一次执行一旦产生确认点赞，就自动成为新的回顾基线。顶部执行数据、互斥 episode 结果和首次观察延迟只统计该执行日对应的 cohort，趋势中的回馈人数归入最近触达日。滚动 30 天 KPI、候选层级和 Verified 群体仍使用全局滚动证据。完整口径见 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。
+
 ## 事实源层级
 
 | 数据 | 权威来源 | 是否可直接修改 |
@@ -55,7 +57,7 @@ flowchart LR
 
 1. 扫描当时最新 30 幅本人作品。
 2. 记录可见点赞来源和评论候选，不产生互动。
-3. 重建反馈、生成最多 25 位候选的 preview、digest 和 24 小时 expiry。
+3. 重建反馈、按当天剩余额度生成最多 100 位候选的 preview、digest 和 24 小时 expiry。
 4. 封存 preflight，等待首次明确批准。
 
 ### Approval
@@ -66,9 +68,9 @@ flowchart LR
 
 ### Run
 
-1. 每批最多 25 个确认点赞，当日累计不超过 100。
+1. 一个 run 连续执行当天剩余额度，当日累计不超过 100。
 2. 每个成功动作立即写入 checkpoint，并自动打开或延长 72 小时 feedback episode。
-3. 达到批次上限、安全停机或候选耗尽后封存 run。
+3. 达到 100、安全停机或候选耗尽后封存 run；普通中断恢复同一 run。
 4. 重建 status 和 Dashboard。
 
 ## 算法合同
@@ -81,8 +83,10 @@ flowchart LR
 - episode 默认 72 小时；窗口内第二次触达延长同一 episode，不创建第二个独立成败样本。
 - 同一摄影师在窗口内给多幅作品点赞，只计一个独立回馈者；额外作品只增加收到点赞数。
 - 证据采用 30 天半衰期；Thompson Sampling 必须支持固定 seed，时间逻辑必须支持注入时钟。
+- 成熟 KPI 只接纳 `expires_at <= now` 的完整 episode；延长窗口不能因第一触达已满 72 小时而提前进入分母。
+- 同日多个 run 的状态按 `ended_at`、`run_id` 确定性取最新，不依赖日志文件遍历顺序。
 
-详细数学定义和验收条件保留在 [原始设计 spec](superpowers/specs/2026-08-12-500px-feedback-growth-design.md)。
+当前运行合同见 [单次 100 Consolidation 设计](superpowers/specs/2026-08-13-single-run-100-consolidation-design.md)；详细数学定义保留在已标记为历史的 [原始设计 spec](superpowers/specs/2026-08-12-500px-feedback-growth-design.md)。
 
 ## 安全不变量
 

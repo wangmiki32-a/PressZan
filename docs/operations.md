@@ -35,10 +35,10 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status \
 | `daily_complete` 或 `confirmed_likes=100` | 当日停止，不创建第 101 个动作 |
 | 存在 recoverable run | 使用 `resume --run-id <run_id>`，从最后确认事件继续 |
 | `paused_reason` 非空 | 保留断点，人工确认页面和账号已恢复后再继续 |
-| 首次尚未批准 | 完整执行只读 preflight，返回 preview 等待用户批准 |
-| 今日有剩余额度且无 active run | 开始本批，最多完成 25 个确认点赞 |
+| 首次尚未批准 | 完整执行只读 preflight，展示摘要并询问“确认执行？” |
+| 今日有剩余额度且无 active run | 开始一个连续 run，执行到当日累计 100 |
 
-## 标准批次
+## 标准日任务
 
 ### Preflight
 
@@ -48,7 +48,7 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 
 ### 首次批准
 
-公开指令 `run --approve <preview_id>` 映射为内部 approval run。满足以下条件才使用快速复核：
+用户回复“确认执行”后，skill 通过内部 `latest-preview` 解析最新 preview，再启动 approval run；不向用户暴露 ID。满足以下条件才使用快速复核：
 
 - preview 与当前 `daily_task_id` 相同；
 - 仍在 24 小时有效期内；
@@ -63,7 +63,7 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 3. 读取 `before_state=not_liked`，点击一次，再读取 `after_state=liked`。
 4. 页面确认成功后立即追加事件；失败或不明确时不得重复点击。
 5. 从当前作品评论区选择下一位未访问候选，链路不足时从本地高分队列重新播种。
-6. 本批达到 25 个确认成功后封存，并重建 status 和 Dashboard。
+6. 同一个 run 持续执行当天剩余额度；达到当日累计 100 后封存，并重建 status 和 Dashboard。
 
 ## 已验证故障与最短恢复
 
@@ -85,20 +85,22 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 
 以下是截至 2026-08-13 的历史验证基线，不代表未来当前状态：
 
-- 四个正式批次均完成 25 个确认点赞，合计 100 个。
+- 历史首轮曾以四个旧式 run 合计完成 100 个确认点赞；这只用于验证旧日志兼容，不再是推荐流程。
 - 当日覆盖 100 位不同摄影师，满足并高于至少 80 位的约束。
 - 没有发生安全暂停，也没有第 101 个动作。
 - 一次旧审批因候选状态变化被正确拒绝，证明 digest 和 `approval_rejected` 路径有效。
 - 九个只读页面在一次重试后仍无法读取点赞者列表，被记录为 `scan_issue`，未阻断其余任务。
 - 两位候选主页作品不可读，被跳过且没有消耗成功额度。
 - 当时尚无 `verified` 摄影师，因此没有发送评论；不能为了增加互动而放宽评论资格。
+- 次日只读扫描首次观察到 51 位归因回馈者，另有 49 个 episode 仍在 72 小时窗口中；这证明回馈观察链可工作，但窗口成熟前不能把 51% 报成最终成熟回馈率。
 
 这些结果形成的长期规则已经分别进入 `AGENTS.md`、本手册和 skill references；运行 ID、preview ID、摄影师名单和个人互动细节只保留在本地日志。
 
-## 批次结束检查
+## 任务结束检查
 
-1. 当前 run 已按真实状态封存：`completed`、`paused_incomplete`、`incomplete_candidate_exhausted` 或 `approval_rejected`。
+1. 达到 100、安全暂停或候选耗尽时，当前 run 已按真实状态封存；普通可恢复中断保留 active checkpoint。
 2. `status --json` 的当日数量与页面确认事件一致。
 3. Dashboard 已从日志重建，而不是手工修改。
 4. 没有 active checkpoint 遗留；若必须中断，已明确保留 recoverable run。
-5. 新出现的问题只有在重复出现且解法稳定后，才更新长期文档。
+5. Dashboard 的“最近执行”、互斥 episode 结果和成熟 KPI 符合 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。
+6. 新出现的问题只有在重复出现且解法稳定后，才更新长期文档。

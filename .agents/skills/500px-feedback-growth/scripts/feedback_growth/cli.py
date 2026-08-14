@@ -13,7 +13,7 @@ from . import SCHEMA_VERSION
 from .analytics import WINDOW, classify_photographer, rebuild_state
 from .dashboard import generate_dashboard
 from .model import Candidate, CheckpointHeader, Event, RunLog
-from .selector import BATCH_TARGET, DAILY_TARGET, select_batch
+from .selector import DAILY_TARGET, select_run_candidates
 from .store import (
     LogValidationError,
     append_checkpoint_events,
@@ -170,7 +170,9 @@ def command_begin(args) -> int:
     effective = load_effective_runs(root)
     active = [log for log in effective if log.status == "active"]
     if active:
-        return _error("recoverable_run", recoverable_run_id=active[-1].run_id)
+        recoverable = active[-1]
+        code = "recoverable_run" if recoverable.daily_task_id == _day(now) else "stale_recoverable_run"
+        return _error(code, recoverable_run_id=recoverable.run_id)
     if args.mode == "run" and not args.approve_preview and not _events_have_approval(effective):
         return _error("preflight_required")
     state = rebuild_state(effective, now)
@@ -197,7 +199,17 @@ def command_begin(args) -> int:
 
 def command_resume(args) -> int:
     root = _state_root(args.state_root)
+    now = _now(args.now)
+    recoverable = {
+        log.run_id
+        for log in load_effective_runs(root)
+        if log.status == "active"
+    }
+    if args.run_id not in recoverable:
+        return _error("run_not_recoverable")
     checkpoint = read_checkpoint(root, args.run_id)
+    if checkpoint.header.daily_task_id != _day(now):
+        return _error("daily_task_expired", daily_task_id=checkpoint.header.daily_task_id)
     _json(
         {
             "ok": True,
@@ -218,6 +230,8 @@ def command_event(args) -> int:
     root = _state_root(args.state_root)
     now = _now(args.now)
     checkpoint = read_checkpoint(root, args.run_id)
+    if checkpoint.header.daily_task_id != _day(now):
+        return _error("daily_task_expired", daily_task_id=checkpoint.header.daily_task_id)
     if any(item.kind == "safety_paused" for item in checkpoint.events) and args.kind.startswith("outgoing_"):
         return _error("run_paused")
     data = _parse_fields(args.field)
@@ -299,12 +313,13 @@ def command_preview(args) -> int:
     now = _now(args.now)
     checkpoint = read_checkpoint(root, args.run_id)
     state = rebuild_state(load_effective_runs(root), now)
-    result = select_batch(_candidates(checkpoint, state), state, now, args.seed, BATCH_TARGET)
+    quota_snapshot = _quota_snapshot(state, now)
+    remaining = DAILY_TARGET - int(quota_snapshot["confirmed_likes"])
+    result = select_run_candidates(_candidates(checkpoint, state), state, now, args.seed, remaining)
     plan = list(result.selected)
     preview_id = f"preview-{uuid.uuid4().hex}"
     expires_at = now + timedelta(hours=24)
     digest = _digest(plan)
-    quota_snapshot = _quota_snapshot(state, now)
     item = Event(
         "preview_created",
         now,
@@ -328,6 +343,31 @@ def command_preview(args) -> int:
             "candidate_plan": plan,
             "quota_snapshot": quota_snapshot,
             "status": result.status,
+        }
+    )
+    return 0
+
+
+def command_latest_preview(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    previews = _all_previews(root)
+    if not previews:
+        return _error("preview_not_found")
+    preview, log = previews[-1]
+    if log.daily_task_id != _day(now):
+        return _error("preview_not_current_day")
+    if now > datetime.fromisoformat(str(preview.data["expires_at"])):
+        return _error("preview_expired")
+    state = rebuild_state(load_effective_runs(root), now)
+    if _quota_snapshot(state, now) != preview.data["quota_snapshot"]:
+        return _error("preview_changed")
+    _json(
+        {
+            "ok": True,
+            "preview_id": preview.data["preview_id"],
+            "expires_at": preview.data["expires_at"],
+            "candidate_count": len(preview.data["candidate_plan"]),
         }
     )
     return 0
@@ -386,6 +426,12 @@ def command_finish(args) -> int:
     root = _state_root(args.state_root)
     now = _now(args.now)
     checkpoint = read_checkpoint(root, args.run_id)
+    if checkpoint.header.mode == "run" and args.status == "completed":
+        state = rebuild_state(load_effective_runs(root), now)
+        daily = state.daily_tasks.get(checkpoint.header.daily_task_id)
+        confirmed = daily.confirmed_likes if daily else 0
+        if confirmed != DAILY_TARGET:
+            return _error("daily_incomplete", confirmed_likes=confirmed, target=DAILY_TARGET)
     likes = sum(item.kind == "outgoing_like_confirmed" for item in checkpoint.events)
     comments = sum(item.kind == "outgoing_comment_confirmed" for item in checkpoint.events)
     events = checkpoint.events + (
@@ -473,6 +519,9 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--seed", type=int, required=True)
     _add_common(preview)
 
+    latest_preview = commands.add_parser("latest-preview")
+    _add_common(latest_preview)
+
     approve = commands.add_parser("approve")
     approve.add_argument("--run-id", required=True)
     approve.add_argument("--preview-id", required=True)
@@ -503,6 +552,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "resume": command_resume,
         "event": command_event,
         "preview": command_preview,
+        "latest-preview": command_latest_preview,
         "approve": command_approve,
         "finish": command_finish,
         "status": command_status,

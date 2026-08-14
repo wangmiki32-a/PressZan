@@ -10,6 +10,7 @@
 | [`../README.md`](../README.md) | 项目是什么，如何开始？ | 入口、命令或目录变化时 |
 | [`architecture.md`](architecture.md) | 系统如何组成，事实源和不变量是什么？ | 组件边界、数据流、算法合同变化时 |
 | [`operations.md`](operations.md) | 如何运行、暂停、恢复和排错？ | 真实执行验证出新的稳定操作经验时 |
+| [`knowledge-gaps.md`](knowledge-gaps.md) | 哪些结论仍缺少真实证据？ | 新证据关闭缺口或发现新的关键未知时 |
 | [`decisions/`](decisions/) | 为什么做出重要且难以逆转的决定？ | 重大设计决策获批准时 |
 | [`superpowers/specs/`](superpowers/specs/) | 某项功能最初如何设计？ | 新功能设计获批准时 |
 | [`superpowers/plans/`](superpowers/plans/) | 某次实施如何拆分？ | 生成新的实施计划时 |
@@ -34,7 +35,7 @@
 
 ## 内容归档规则
 
-- 当前批次进度、preview ID、run ID、摄影师名单：只留在 `.local/` 日志或线程，不进入项目文档。
+- 当前日任务进度、preview ID、run ID、摄影师名单：只留在 `.local/` 日志或线程，不进入项目文档。
 - 反复出现且已有稳定解法的页面问题：写入 `docs/operations.md`，执行级细节同步到 skill reference。
 - 会影响所有未来任务的安全边界、事实源、验证要求：写入 `AGENTS.md`。
 - 重大架构选择及其取舍：写入 ADR。

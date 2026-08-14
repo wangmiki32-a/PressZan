@@ -202,6 +202,8 @@ def begin_checkpoint(root: Path, header: CheckpointHeader) -> Path:
 
 def append_checkpoint_events(root: Path, run_id: str, events: Sequence[Event]) -> None:
     path = _checkpoint_path(root, run_id)
+    if (root / "runs" / f"{run_id}.md").exists():
+        raise LogValidationError(f"run {run_id} is already sealed")
     if not path.exists():
         raise LogValidationError(f"checkpoint header missing for {run_id}")
     with path.open("a", encoding="utf-8") as handle:

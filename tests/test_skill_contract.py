@@ -9,13 +9,16 @@ class SkillContractTest(unittest.TestCase):
     def test_entrypoint_routes_all_public_operations_and_cli_lifecycle(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
 
-        for operation in ("preflight", "run", "status", "dashboard"):
+        self.assertIn("$500px-feedback-growth", text)
+        self.assertIn("确认执行", text)
+        for operation in ("preflight", "status", "dashboard"):
             self.assertIn(f"`{operation}`", text)
         for command in (
             "status --json",
             "begin --mode preflight",
             "begin --mode run --approve-preview",
             "preview --run-id",
+            "latest-preview",
             "approve --run-id",
             "finish --run-id",
             "resume --run-id",
@@ -23,7 +26,9 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn(command, text)
         for approval_error in ("preview_not_latest", "preview_changed", "preview_expired"):
             self.assertIn(approval_error, text)
-        self.assertIn("run --approve <preview_id>", text)
+        self.assertNotIn("run --approve <preview_id>", text)
+        self.assertNotIn("最多 25", text)
+        self.assertNotIn("四个 25", text)
         self.assertIn("approved=true", text)
 
     def test_entrypoint_declares_limits_confirmation_and_hard_stops(self):
@@ -32,12 +37,14 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("computer-use:computer-use", text)
         self.assertIn("references/browser-workflow.md", text)
         self.assertIn("references/event-schema.md", text)
-        for value in ("30", "12", "25", "100", "80", "72", "7"):
+        self.assertIn("references/dashboard-semantics.md", text)
+        for value in ("30", "12", "100", "80", "72", "7"):
             self.assertIn(value, text)
+        self.assertIn("当日累计 100", text)
+        self.assertIn("每次确认后立即", text)
         self.assertIn("拍的真棒👍", text)
         self.assertIn("before_state", text)
         self.assertIn("after_state", text)
-        self.assertIn("每次", text)
         for stop in ("CAPTCHA", "限频", "登录失效", "平台警告", "账号不匹配", "状态不明确"):
             self.assertIn(stop, text)
 
@@ -82,7 +89,10 @@ class SkillContractTest(unittest.TestCase):
 
         self.assertIn('display_name: "500px Feedback Growth"', text)
         self.assertIn('short_description: "用可归因反馈持续优化 500px 摄影师点赞互动与回馈增长"', text)
-        self.assertIn("$500px-feedback-growth", text)
+        self.assertIn(
+            'default_prompt: "使用 $500px-feedback-growth 恢复或开始今天的任务，安全执行到当日累计 100 个确认点赞。"',
+            text,
+        )
         self.assertIn("allow_implicit_invocation: false", text)
 
 

@@ -141,6 +141,16 @@ class StoreTest(unittest.TestCase):
             effective = load_effective_runs(root)
             self.assertEqual(effective, (make_log(),))
 
+    def test_sealed_run_rejects_late_checkpoint_events(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            header = CheckpointHeader(1, "run-1", "2026-08-12", "run", utc(9), None)
+            begin_checkpoint(root, header)
+            seal_run(root, make_log())
+
+            with self.assertRaisesRegex(LogValidationError, "already sealed"):
+                append_checkpoint(root, "run-1", make_log().events[0])
+
     def test_duplicate_active_daily_task_is_rejected(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

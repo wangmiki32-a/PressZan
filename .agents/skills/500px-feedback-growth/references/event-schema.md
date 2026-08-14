@@ -37,6 +37,7 @@
 - CLI 收到 `outgoing_like_confirmed` 后自动打开或延长 72 小时 episode；不要另外手工写 opened/extended 事件。
 - CLI 收到新的 `received_like_observed` 后自动关闭符合条件的最近 open episode；不要凭页面猜测手工标记成功。
 - 相同 action ID 会被拒绝；sealed run 与保留 checkpoint 同时存在时，重建只采用 sealed run。
+- Sealed run 不可恢复，也不可继续向 retained checkpoint 追加事件；`resume` 只接受当前 effective state 中的 active run。
 
 ## 安全值
 

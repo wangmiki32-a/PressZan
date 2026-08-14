@@ -9,7 +9,6 @@ from .model import AggregateState, Candidate, SelectionResult
 
 
 DAILY_TARGET = 100
-BATCH_TARGET = 25
 MIN_UNIQUE = 80
 QUOTAS = {"exploit_first": 45, "retest": 20, "new": 15, "verified_second": 20}
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -64,12 +63,12 @@ def _selection(candidate: Candidate, bucket: str, score: float, ordinal: int) ->
     }
 
 
-def select_batch(
+def select_run_candidates(
     candidates: Sequence[Candidate],
     state: AggregateState,
     now: datetime,
     seed: int,
-    limit: int = BATCH_TARGET,
+    limit: int = DAILY_TARGET,
 ) -> SelectionResult:
     day = _today(now)
     daily = state.daily_tasks.get(day)

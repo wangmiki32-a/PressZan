@@ -8,7 +8,7 @@ import unittest
 
 from tests import bootstrap  # noqa: F401
 from feedback_growth.model import Event, RunLog
-from feedback_growth.store import seal_run
+from feedback_growth.store import read_checkpoint, seal_run
 from tests.helpers import confirmed_like, dt, opened
 
 
@@ -34,6 +34,7 @@ def invoke(root, *args):
 
 
 def add_candidate(root, run_id, identifier="p1", page_order=1):
+    occurred_at = read_checkpoint(root, run_id).header.started_at.isoformat()
     return invoke(
         root,
         "event",
@@ -53,6 +54,8 @@ def add_candidate(root, run_id, identifier="p1", page_order=1):
         "source_url=https://example.test/source",
         "--field",
         f"page_order={page_order}",
+        "--now",
+        occurred_at,
     )
 
 
@@ -71,7 +74,7 @@ def create_preview(root, now="2026-08-12T09:00:00+00:00", identifier="p1"):
     return preview
 
 
-def seed_approved_likes(root, count, base_time, daily_task_id):
+def seed_approved_likes(root, count, base_time, daily_task_id, *, offset=0, run_id=None):
     events = [
         Event(
             "onboarding_approved",
@@ -81,8 +84,9 @@ def seed_approved_likes(root, count, base_time, daily_task_id):
     ]
     for index in range(count):
         occurred_at = base_time + timedelta(seconds=index + 1)
-        photographer_id = f"p{index:03}"
-        photo_id = f"photo-{index:03}"
+        ordinal = index + offset
+        photographer_id = f"p{ordinal:03}"
+        photo_id = f"photo-{ordinal:03}"
         identifier = deterministic_action_id(daily_task_id, photographer_id, photo_id, "outgoing_like_confirmed")
         events.append(confirmed_like(identifier, photographer_id, occurred_at, bucket="new", photo_id=photo_id))
         events.append(opened(hashlib.sha256(f"episode:{photographer_id}:{identifier}".encode()).hexdigest(), photographer_id, identifier, occurred_at, occurred_at + timedelta(hours=72)))
@@ -94,10 +98,235 @@ def seed_approved_likes(root, count, base_time, daily_task_id):
             {"status": "completed", "confirmed_like_count": count, "confirmed_comment_count": 0},
         )
     )
-    seal_run(root, RunLog(1, f"seed-{count}", daily_task_id, "run", "completed", base_time, ended, tuple(events)))
+    seal_run(
+        root,
+        RunLog(1, run_id or f"seed-{count}-{offset}", daily_task_id, "run", "completed", base_time, ended, tuple(events)),
+    )
 
 
 class CliTest(unittest.TestCase):
+    def test_preview_plans_full_daily_target(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, begun = invoke(root, "begin", "--mode", "preflight", "--now", "2026-08-12T09:00:00+00:00")
+            for index in range(100):
+                add_candidate(root, begun["run_id"], identifier=f"n{index:03}", page_order=index + 1)
+
+            result, preview = invoke(
+                root,
+                "preview",
+                "--run-id",
+                begun["run_id"],
+                "--seed",
+                "8122026",
+                "--now",
+                "2026-08-12T09:00:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(len(preview["candidate_plan"]), 100)
+            self.assertEqual(preview["quota_snapshot"]["confirmed_likes"], 0)
+
+    def test_preview_plans_only_remaining_63_after_37_likes(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 37, dt(12, 8), "2026-08-12")
+            _, begun = invoke(root, "begin", "--mode", "preflight", "--now", "2026-08-12T09:00:00+00:00")
+            for index in range(100):
+                add_candidate(root, begun["run_id"], identifier=f"q{index:03}", page_order=index + 1)
+
+            result, preview = invoke(
+                root,
+                "preview",
+                "--run-id",
+                begun["run_id"],
+                "--seed",
+                "8122026",
+                "--now",
+                "2026-08-12T09:00:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(len(preview["candidate_plan"]), 63)
+            self.assertEqual(preview["quota_snapshot"]["confirmed_likes"], 37)
+
+    def test_latest_preview_returns_current_valid_preview(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            preview = create_preview(root)
+
+            result, payload = invoke(root, "latest-preview", "--now", "2026-08-12T10:00:00+00:00")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["preview_id"], preview["preview_id"])
+            self.assertEqual(payload["candidate_count"], 1)
+
+    def test_latest_preview_rejects_cross_day_preview(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            create_preview(root)
+
+            result, payload = invoke(root, "latest-preview", "--now", "2026-08-13T09:00:01+00:00")
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "preview_not_current_day")
+
+    def test_one_run_can_record_all_100_likes(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 0, dt(12, 8), "2026-08-12")
+            result, begun = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T09:00:00+00:00")
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            for index in range(100):
+                photographer_id = f"r{index:03}"
+                photo_id = f"run-photo-{index:03}"
+                action_id = deterministic_action_id(
+                    "2026-08-12", photographer_id, photo_id, "outgoing_like_confirmed"
+                )
+                result, payload = invoke(
+                    root,
+                    "event",
+                    "--run-id",
+                    begun["run_id"],
+                    "--kind",
+                    "outgoing_like_confirmed",
+                    "--field",
+                    f"action_id={action_id}",
+                    "--field",
+                    f"photographer_id={photographer_id}",
+                    "--field",
+                    f"photo_id={photo_id}",
+                    "--field",
+                    f"photo_url=https://example.test/{photo_id}",
+                    "--field",
+                    "quota_bucket=new",
+                    "--field",
+                    "before_state=not_liked",
+                    "--field",
+                    "after_state=liked",
+                    "--now",
+                    f"2026-08-12T09:{index // 60:02}:{index % 60:02}+00:00",
+                )
+                self.assertEqual(result.returncode, 0, payload)
+
+            result, _ = invoke(
+                root,
+                "finish",
+                "--run-id",
+                begun["run_id"],
+                "--status",
+                "completed",
+                "--now",
+                "2026-08-12T10:00:00+00:00",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result, status = invoke(root, "status", "--json", "--now", "2026-08-12T10:01:00+00:00")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(status["today"]["confirmed_likes"], 100)
+            self.assertEqual(len(list((root / "runs").glob("run-*.md"))), 1)
+
+    def test_four_historical_25_like_runs_still_rebuild_to_100(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for group in range(4):
+                seed_approved_likes(
+                    root,
+                    25,
+                    dt(12, group + 1),
+                    "2026-08-12",
+                    offset=group * 25,
+                    run_id=f"historical-{group}",
+                )
+
+            result, status = invoke(root, "status", "--json", "--now", "2026-08-12T12:00:00+00:00")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(status["today"]["confirmed_likes"], 100)
+            self.assertEqual(status["today"]["unique_photographers"], 100)
+
+    def test_resume_rejects_sealed_run(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 0, dt(12, 8), "2026-08-12", run_id="sealed-run")
+
+            result, payload = invoke(root, "resume", "--run-id", "sealed-run")
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "run_not_recoverable")
+
+    def test_run_cannot_claim_completed_before_daily_target(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 0, dt(12, 8), "2026-08-12")
+            _, begun = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T09:00:00+00:00")
+
+            result, payload = invoke(
+                root,
+                "finish",
+                "--run-id",
+                begun["run_id"],
+                "--status",
+                "completed",
+                "--now",
+                "2026-08-12T09:01:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "daily_incomplete")
+            self.assertTrue((root / "checkpoints" / f"{begun['run_id']}.md").exists())
+            self.assertFalse((root / "runs" / f"{begun['run_id']}.md").exists())
+
+    def test_active_run_cannot_carry_actions_across_shanghai_midnight(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 0, dt(12, 8), "2026-08-12")
+            _, begun = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T15:59:00+00:00")
+
+            result, payload = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T16:01:00+00:00")
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "stale_recoverable_run")
+            self.assertEqual(payload["recoverable_run_id"], begun["run_id"])
+
+            result, payload = invoke(
+                root,
+                "resume",
+                "--run-id",
+                begun["run_id"],
+                "--now",
+                "2026-08-12T16:01:00+00:00",
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "daily_task_expired")
+
+            action_id = deterministic_action_id("2026-08-12", "p1", "photo-1", "outgoing_like_confirmed")
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id",
+                begun["run_id"],
+                "--kind",
+                "outgoing_like_confirmed",
+                "--field",
+                f"action_id={action_id}",
+                "--field",
+                "photographer_id=p1",
+                "--field",
+                "photo_id=photo-1",
+                "--field",
+                "photo_url=https://example.test/photo-1",
+                "--field",
+                "quota_bucket=new",
+                "--field",
+                "before_state=not_liked",
+                "--field",
+                "after_state=liked",
+                "--now",
+                "2026-08-12T16:01:00+00:00",
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "daily_task_expired")
+
     def test_fixed_clock_and_seed_rebuild_status_and_dashboard_deterministically(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -393,10 +622,10 @@ class CliTest(unittest.TestCase):
             result, payload = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T10:02:00+00:00")
             self.assertEqual(result.returncode, 2)
             self.assertEqual(payload["recoverable_run_id"], run_id)
-            result, resumed = invoke(root, "resume", "--run-id", run_id)
+            result, resumed = invoke(root, "resume", "--run-id", run_id, "--now", "2026-08-12T10:02:30+00:00")
             self.assertEqual(result.returncode, 0)
             self.assertEqual(sum(e["kind"] == "outgoing_like_confirmed" for e in resumed["events"]), 1)
-            invoke(root, "finish", "--run-id", run_id, "--status", "completed", "--now", "2026-08-12T10:03:00+00:00")
+            invoke(root, "finish", "--run-id", run_id, "--status", "incomplete_candidate_exhausted", "--now", "2026-08-12T10:03:00+00:00")
             result, status = invoke(root, "status", "--json", "--now", "2026-08-12T10:04:00+00:00")
             self.assertEqual(result.returncode, 0)
             self.assertEqual(status["today"]["confirmed_likes"], 1)

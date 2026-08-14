@@ -14,17 +14,28 @@
 | 批准返回 `preview_changed` | 候选、顺序或 quota snapshot 已变化 | 封存为 `approval_rejected`，生成新 preflight；不得继续旧名单 |
 | 主分支与 worktree 都有 `.local` | 状态根目录漂移 | 所有 CLI 显式使用主工作区绝对 `--state-root`，不得从 worktree 继续累计 |
 | checkpoint 事件落入旧运行 | 临时脚本写死旧 `run_id` | 每次生成脚本后先核对 `run_id`、`scan_id`、`state-root`；每页写入后检查返回 position |
+| `resume` 返回 `run_not_recoverable` | run 已 sealed、ID 过期或不是当前 active run | 回到 `status --json`；只恢复返回的 recoverable run，不向 retained checkpoint 追加 |
+| `begin` 返回 `stale_recoverable_run` | 旧日 active run 跨过 Asia/Shanghai 日界线 | 不 resume、不追加动作；封存旧日为 `paused_incomplete`，再开始新日任务 |
 
 ## 避免重复扫描
 
 同日新鲜 preview 已包含完整 30 幅作品、点赞来源和评论候选。首次批准时：
 
-1. 从 preview 读取 25 位 `candidate_plan`。
+1. 从 preview 读取当天剩余额度对应的完整 `candidate_plan`。
 2. 按 `source_url` 分组并访问每个唯一来源一次。
 3. 只追加仍可见的批准候选，不追加其他评论者，也不打开点赞者列表。
 4. 执行 `approve` 校验 digest；通过后立即进入候选主页。
 
 完整 30 幅扫描只属于 preflight。批准复核再次扫描 30 幅既增加延迟，也会把页面分钟级变化引入候选池。
+
+## 连续日任务恢复
+
+- 正常运行不按固定动作数切分；一个 run 持续到当日累计 100。
+- 每个确认动作已经独立 checkpoint，因此中断时恢复同一 `run_id`，不需要从头重放候选。
+- Sealed 后 retained checkpoint 只作审计证据；CLI 拒绝继续 append 或 resume。
+- 浏览器连接丢失但未出现安全警告时保留 active checkpoint；重新连接后先读 `resume` 输出和页面当前状态。
+- 只有确认达到 100、安全暂停或候选耗尽时才封存 run。未知中断不得伪写 `completed`。
+- 跨日 active run 是例外：旧日额度不结转，`resume`/`event` 返回 `daily_task_expired`，需封存旧日未完成状态后再开始新日。
 
 ## 页面与日志不变量
 

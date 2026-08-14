@@ -5,7 +5,7 @@ import unittest
 
 from tests import bootstrap  # noqa: F401
 from feedback_growth.model import AggregateState, Candidate, PhotographerStats
-from feedback_growth.selector import select_batch
+from feedback_growth.selector import DAILY_TARGET, select_run_candidates
 from tests.helpers import dt
 
 
@@ -60,7 +60,7 @@ class SelectorTest(unittest.TestCase):
         new = [candidate(f"n{i:02}", "new", i) for i in range(15)]
         candidates = exploit + retest + new
 
-        result = select_batch(candidates, state_for(candidates), NOW, seed=8122026, limit=100)
+        result = select_run_candidates(candidates, state_for(candidates), NOW, seed=8122026, limit=100)
 
         buckets = Counter(item["bucket"] for item in result.selected)
         ids = [item["photographer_id"] for item in result.selected]
@@ -74,14 +74,14 @@ class SelectorTest(unittest.TestCase):
     def test_retest_new_is_not_new_exploration(self):
         item = candidate("r1", "new", 1, True)
 
-        result = select_batch([item], state_for([item]), NOW, seed=1, limit=1)
+        result = select_run_candidates([item], state_for([item]), NOW, seed=1, limit=1)
 
         self.assertEqual(result.selected[0]["bucket"], "retest")
 
     def test_shortage_does_not_weaken_constraints(self):
         candidates = [candidate(f"n{i:02}", "new", i) for i in range(70)]
 
-        result = select_batch(candidates, state_for(candidates), NOW, seed=2, limit=100)
+        result = select_run_candidates(candidates, state_for(candidates), NOW, seed=2, limit=100)
 
         self.assertEqual(len(result.selected), 70)
         self.assertEqual(result.status, "incomplete_candidate_exhausted")
@@ -91,7 +91,7 @@ class SelectorTest(unittest.TestCase):
         later = candidate("later", "promising", 2)
         earlier = candidate("earlier", "promising", 1)
         with patch("feedback_growth.selector.random.Random.betavariate", side_effect=[0.70, 0.66]):
-            result = select_batch([later, earlier], state_for([later, earlier]), NOW, seed=3, limit=1)
+            result = select_run_candidates([later, earlier], state_for([later, earlier]), NOW, seed=3, limit=1)
 
         self.assertEqual(result.selected[0]["photographer_id"], "earlier")
 
@@ -99,7 +99,7 @@ class SelectorTest(unittest.TestCase):
         later = candidate("later", "promising", 2)
         earlier = candidate("earlier", "promising", 1)
         with patch("feedback_growth.selector.random.Random.betavariate", side_effect=[0.70, 0.64]):
-            result = select_batch([later, earlier], state_for([later, earlier]), NOW, seed=3, limit=1)
+            result = select_run_candidates([later, earlier], state_for([later, earlier]), NOW, seed=3, limit=1)
 
         self.assertEqual(result.selected[0]["photographer_id"], "later")
 
@@ -107,7 +107,16 @@ class SelectorTest(unittest.TestCase):
         candidates = [candidate(f"p{i:02}", "promising", i) for i in range(30)]
         state = state_for(candidates)
 
-        first = select_batch(candidates, state, NOW, seed=8122026, limit=25)
-        second = select_batch(candidates, state, NOW, seed=8122026, limit=25)
+        first = select_run_candidates(candidates, state, NOW, seed=8122026, limit=25)
+        second = select_run_candidates(candidates, state, NOW, seed=8122026, limit=25)
 
         self.assertEqual(first, second)
+
+    def test_default_limit_targets_full_day(self):
+        candidates = [candidate(f"n{i:03}", "new", i) for i in range(DAILY_TARGET)]
+
+        result = select_run_candidates(candidates, state_for(candidates), NOW, seed=8122026)
+
+        self.assertEqual(len(result.selected), DAILY_TARGET)
+        self.assertEqual(result.remaining_daily_quota, 0)
+        self.assertEqual(result.status, "daily_complete")

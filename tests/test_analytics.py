@@ -11,6 +11,7 @@ from feedback_growth.analytics import (
     matured_cohort_kpi,
     rebuild_state,
 )
+from feedback_growth.model import RunLog
 from tests.helpers import confirmed_like, dt, event, opened, received, run
 
 
@@ -145,6 +146,55 @@ class AnalyticsTest(unittest.TestCase):
 
         self.assertEqual(matured_cohort_counts(state, NOW), (0, 0))
         self.assertIsNone(matured_cohort_kpi(state, NOW))
+
+    def test_extended_episode_is_not_mature_until_latest_expiry(self):
+        first = NOW - timedelta(hours=73)
+        second = NOW - timedelta(hours=70)
+        ep = episode_id("p1", "a1")
+        events = [
+            confirmed_like("a1", "p1", first),
+            opened(ep, "p1", "a1", first, first + timedelta(hours=72)),
+            confirmed_like("a2", "p1", second),
+            event(
+                "feedback_episode_extended",
+                second,
+                episode_id=ep,
+                touch_action_id="a2",
+                previous_expires_at=(first + timedelta(hours=72)).isoformat(),
+                expires_at=(second + timedelta(hours=72)).isoformat(),
+            ),
+        ]
+
+        state = rebuild_state([run(events)], NOW)
+
+        self.assertEqual(matured_cohort_counts(state, NOW), (0, 0))
+        self.assertIsNone(matured_cohort_kpi(state, NOW))
+
+    def test_latest_run_status_is_chronological_not_input_order(self):
+        older = RunLog(
+            1,
+            "older",
+            "2026-08-12",
+            "run",
+            "paused_incomplete",
+            dt(12, 8),
+            dt(12, 9),
+            (),
+        )
+        newer = RunLog(
+            1,
+            "newer",
+            "2026-08-12",
+            "run",
+            "incomplete_candidate_exhausted",
+            dt(12, 10),
+            dt(12, 11),
+            (),
+        )
+
+        state = rebuild_state([newer, older], NOW)
+
+        self.assertEqual(state.daily_tasks["2026-08-12"].status, "incomplete_candidate_exhausted")
 
     def test_two_recent_successes_are_verified(self):
         events = []

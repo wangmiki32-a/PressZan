@@ -1,5 +1,7 @@
 # 500px Feedback Growth Implementation Plan
 
+> 状态：Historical / Superseded。本文保留初版实施过程，不再作为当前执行计划。当前计划见 [2026-08-13 Single-Run 100 Consolidation](2026-08-13-single-run-100-consolidation.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a project-local skill that learns which 500px photographers reciprocate likes, executes confirmed browser interactions in safe batches, persists append-only Markdown evidence, and renders a self-contained dashboard.

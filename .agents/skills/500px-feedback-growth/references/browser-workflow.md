@@ -18,10 +18,10 @@
 ### 批准快速复核
 
 1. 仅当 preview 属于同一 `daily_task_id`、未过期、且 preview 后确认点赞仍为 0 时使用。
-2. 从已封存 preview 读取 25 位 `candidate_plan`，按 `source_url` 分组。每个来源作品只打开一次，先等待评论区稳定，再读取 `/community/user-details/` 链接。
+2. 从已封存 preview 读取完整 `candidate_plan`，按 `source_url` 分组。每个来源作品只打开一次，先等待评论区稳定，再读取 `/community/user-details/` 链接。
 3. 只为已批准且仍可见的候选追加 `candidate_observed`；`display_name`、`profile_url` 和 `page_order` 来自当前页面。不要把页面上的其他评论者加入本次 run checkpoint，也不要再次打开点赞者弹层。
 4. 候选缺失、顺序变化或配额变化时让 `approve` 返回 `preview_changed`。不得为了匹配 digest 抄写旧观察或伪造当前 `page_order`。
-5. 快速复核通常只访问约 10–15 个来源页；不要重复完整 30 幅 preflight。完整回馈扫描由 preflight 负责。
+5. 快速复核只访问候选计划中的唯一来源页；不要重复完整 30 幅 preflight。完整回馈扫描由 preflight 负责。
 
 ### 点赞执行
 
@@ -30,6 +30,7 @@
 3. 点赞前读取并记录 `before_state=not_liked`。点击一次后重新读取同一控件；仅在 `after_state=liked` 可见时记录 `outgoing_like_confirmed`。若状态不明确，不重按，按硬停止处理。
 4. verified 摄影师只有在本地 7 天冷却已结束、今天为其第一幅成功点赞且页面无同文重复时，才能评论固定文本“拍的真棒👍”。提交后重新读取评论区；只有文本可见才记录 `before_state=not_visible`、`after_state=visible`。
 5. 成功或跳过后读取当前作品评论区，选择下一位未访问评论者并循环。单人当日最多 2 幅；第二幅只限 verified。
+6. 同一个 run 持续执行当天剩余额度，正常完成点是当日累计 100；不得人为拆分封存后要求用户再次启动。
 
 ## 回馈更新
 

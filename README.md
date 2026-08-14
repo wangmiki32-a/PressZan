@@ -6,10 +6,12 @@
 
 ## 快速入口
 
-- 执行工作流：显式调用 `$500px-feedback-growth`。
+- 执行工作流：调用 `$500px-feedback-growth`，无需参数；它会恢复或开始今天的任务并持续到当日累计 100。
+- 首次预览后只需回复“确认执行”，无需复制 preview ID。
 - 查看项目规则：阅读 [AGENTS.md](AGENTS.md)。
 - 了解系统边界：阅读 [架构说明](docs/architecture.md)。
 - 执行、恢复或排查：阅读 [运行手册](docs/operations.md)。
+- 查看尚待真实证据验证的问题：阅读 [知识缺口](docs/knowledge-gaps.md)。
 - 查找文档职责和维护方式：阅读 [文档索引](docs/README.md)。
 
 状态检查命令：
@@ -50,6 +52,7 @@ git diff --check
 │   ├── README.md                     # 文档索引和维护规则
 │   ├── architecture.md               # 架构、数据流和系统不变量
 │   ├── operations.md                 # 日常执行与故障恢复手册
+│   ├── knowledge-gaps.md             # 待真实运行补足的证据缺口
 │   ├── decisions/                    # 长期架构决策记录
 │   └── superpowers/                  # 已批准设计与实施计划
 ├── tests/                             # 无真实外部互动的确定性测试

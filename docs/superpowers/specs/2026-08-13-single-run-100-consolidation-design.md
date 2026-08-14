@@ -1,6 +1,6 @@
 # 单次 100 赞与启动简化 Consolidation 设计
 
-- 状态：Approved
+- 状态：Implemented
 - 日期：2026-08-13
 - 替代范围：原设计中所有“每次 25 个、同日调用四次”和公开 `run --approve <preview_id>` 规则
 

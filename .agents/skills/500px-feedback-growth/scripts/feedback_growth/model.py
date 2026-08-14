@@ -77,8 +77,6 @@ class DailyTaskStats:
     status: str
     completed_at: Optional[datetime]
     reinforcement_likes: int
-    new_reciprocator_ids: FrozenSet[str]
-    tier_changes: Tuple[Mapping[str, str], ...]
     skip_counts: Mapping[str, int]
     risk_events: Tuple[Mapping[str, str], ...]
 

@@ -17,28 +17,42 @@ LATENCY_BUCKETS = (
 
 
 def _current_task(state: AggregateState, now: datetime) -> Mapping[str, object]:
-    daily_task_id = now.astimezone(SHANGHAI).date().isoformat()
-    daily = state.daily_tasks.get(daily_task_id)
+    today_id = now.astimezone(SHANGHAI).date().isoformat()
+    execution_days = [
+        daily
+        for daily in state.daily_tasks.values()
+        if daily.daily_task_id <= today_id and daily.confirmed_likes > 0
+    ]
+    daily = max(execution_days, key=lambda item: item.daily_task_id, default=None)
+    if daily is None:
+        daily = state.daily_tasks.get(today_id)
     if daily is None:
         return {
-            "daily_task_id": daily_task_id,
+            "daily_task_id": today_id,
             "confirmed_likes": 0,
             "unique_photographers": 0,
             "confirmed_comments": 0,
             "status": "not_started",
             "pause_reason": state.paused_reason,
+            "is_today": True,
         }
     return {
-        "daily_task_id": daily_task_id,
+        "daily_task_id": daily.daily_task_id,
         "confirmed_likes": daily.confirmed_likes,
         "unique_photographers": len(daily.unique_photographer_ids),
         "confirmed_comments": daily.confirmed_comments,
         "status": "completed" if daily.confirmed_likes == 100 else daily.status,
         "pause_reason": state.paused_reason,
+        "is_today": daily.daily_task_id == today_id,
     }
 
 
 def _history_tabs(state: AggregateState):
+    attributed_by_day = Counter(
+        episode.last_touch_at.astimezone(SHANGHAI).date().isoformat()
+        for episode in state.episodes.values()
+        if episode.outcome == "success" and episode.feedback_first_seen_at is not None
+    )
     tabs = []
     for daily in sorted(state.daily_tasks.values(), key=lambda item: item.daily_task_id, reverse=True):
         if daily.confirmed_likes != 100 or daily.completed_at is None:
@@ -50,8 +64,7 @@ def _history_tabs(state: AggregateState):
                 "unique_photographers": len(daily.unique_photographer_ids),
                 "reinforcement_likes": daily.reinforcement_likes,
                 "confirmed_comments": daily.confirmed_comments,
-                "new_reciprocators": len(daily.new_reciprocator_ids),
-                "tier_changes": list(daily.tier_changes),
+                "attributed_reciprocators": attributed_by_day[daily.daily_task_id],
                 "quota_counts": dict(daily.quota_counts),
                 "skip_counts": dict(daily.skip_counts),
                 "risk_events": list(daily.risk_events),
@@ -60,10 +73,12 @@ def _history_tabs(state: AggregateState):
     return tabs
 
 
-def _latency_buckets(state: AggregateState):
+def _latency_buckets(state: AggregateState, daily_task_id: str):
     counts = Counter()
     for episode in state.episodes.values():
         if episode.outcome != "success" or episode.feedback_first_seen_at is None:
+            continue
+        if episode.last_touch_at.astimezone(SHANGHAI).date().isoformat() != daily_task_id:
             continue
         hours = (episode.feedback_first_seen_at - episode.last_touch_at).total_seconds() / 3600
         for label, lower, upper in LATENCY_BUCKETS:
@@ -77,9 +92,13 @@ def _daily_trend(state: AggregateState):
     feedback_by_day = Counter()
     for episode in state.episodes.values():
         if episode.outcome == "success" and episode.feedback_first_seen_at is not None:
-            day = episode.feedback_first_seen_at.astimezone(SHANGHAI).date().isoformat()
+            day = episode.last_touch_at.astimezone(SHANGHAI).date().isoformat()
             feedback_by_day[day] += 1
-    days = set(state.daily_tasks) | set(feedback_by_day)
+    days = {
+        day
+        for day, daily in state.daily_tasks.items()
+        if daily.confirmed_likes > 0
+    } | set(feedback_by_day)
     return [
         {
             "day": day,
@@ -90,8 +109,23 @@ def _daily_trend(state: AggregateState):
     ]
 
 
+def _trend_chart(points):
+    count = len(points)
+    if count == 0:
+        kind = "empty"
+    elif count == 1:
+        kind = "single_day_bars"
+    elif count < 8:
+        kind = "grouped_bars"
+    else:
+        kind = "lines"
+    return {"kind": kind, "points": points}
+
+
 def build_dashboard_view_model(state: AggregateState, now: datetime) -> Mapping[str, object]:
     numerator, denominator = matured_cohort_counts(state, now)
+    current_task = _current_task(state, now)
+    review_day = str(current_task["daily_task_id"])
     tiers: Dict[str, str] = {
         identifier: classify_photographer(stats, now)
         for identifier, stats in state.photographers.items()
@@ -116,29 +150,41 @@ def build_dashboard_view_model(state: AggregateState, now: datetime) -> Mapping[
             }
         )
     ranking.sort(key=lambda item: (-item["successes_30d"], item["display_name"], item["photographer_id"]))
-    successful_episodes = sum(episode.outcome == "success" for episode in state.episodes.values())
-    open_episodes = sum(episode.outcome == "open" for episode in state.episodes.values())
+    review_touches = [
+        touch
+        for touch in state.outgoing_touches
+        if touch.occurred_at.astimezone(SHANGHAI).date().isoformat() == review_day
+    ]
+    review_episodes = [
+        episode
+        for episode in state.episodes.values()
+        if episode.last_touch_at.astimezone(SHANGHAI).date().isoformat() == review_day
+    ]
+    successful_episodes = sum(episode.outcome == "success" for episode in review_episodes)
+    open_episodes = sum(episode.outcome == "open" for episode in review_episodes)
+    failed_episodes = sum(episode.outcome == "failure" for episode in review_episodes)
+    daily_trend = _daily_trend(state)
     return {
         "generated_at": now.isoformat(),
-        "current_task": _current_task(state, now),
+        "current_task": current_task,
         "kpi": {
             "value": matured_cohort_kpi(state, now),
             "numerator": numerator,
             "denominator": denominator,
         },
         "verified_count": tier_distribution["verified"],
-        "daily_trend": _daily_trend(state),
+        "daily_trend": daily_trend,
+        "trend_chart": _trend_chart(daily_trend),
         "tier_distribution": [
             {"tier": tier, "count": tier_distribution[tier]}
             for tier in ("verified", "promising", "new", "dormant")
         ],
-        "funnel": [
-            {"stage": "已确认触达", "count": len(state.outgoing_touches)},
-            {"stage": "观察窗口中", "count": open_episodes},
-            {"stage": "归因回馈", "count": successful_episodes},
-            {"stage": "Verified", "count": tier_distribution["verified"]},
-        ],
-        "latency_buckets": _latency_buckets(state),
+        "cohort_outcomes": {
+            "attributed": successful_episodes,
+            "open": open_episodes,
+            "failed": failed_episodes,
+        },
+        "latency_buckets": _latency_buckets(state, review_day),
         "verified_ranking": ranking,
         "history_tabs": _history_tabs(state),
     }
