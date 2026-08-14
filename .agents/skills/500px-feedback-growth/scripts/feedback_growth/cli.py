@@ -1002,6 +1002,230 @@ def command_review_fail(args) -> int:
     return 0
 
 
+def _migration_analysis(root: Path, mapped_run_ids: Sequence[str], photo_ids: Sequence[str]) -> Mapping[str, object]:
+    mapped_run_ids = list(dict.fromkeys(mapped_run_ids))
+    photo_ids = list(dict.fromkeys(photo_ids))
+    if len(mapped_run_ids) == 0:
+        raise CliError("mapped_run_required")
+    if len(photo_ids) != 5:
+        raise CliError("showcase_requires_exactly_five")
+    logs = list(iter_sealed_logs(root))
+    by_id = {log.run_id: log for log in logs}
+    if any(run_id not in by_id for run_id in mapped_run_ids):
+        raise CliError("mapped_run_not_sealed")
+    touch_events = [
+        item for run_id in mapped_run_ids for item in by_id[run_id].events
+        if item.kind == "outgoing_like_confirmed"
+    ]
+    if not touch_events:
+        raise CliError("cycle_has_no_confirmed_likes")
+    like_completed_at = max(item.occurred_at for item in touch_events)
+    touch_action_ids = [str(item.data["action_id"]) for item in touch_events]
+    episode_ids = list(dict.fromkeys(
+        str(item.data["episode_id"])
+        for run_id in mapped_run_ids
+        for item in by_id[run_id].events
+        if item.kind in {"feedback_episode_opened", "feedback_episode_extended"}
+        and item.data["touch_action_id"] in touch_action_ids
+    ))
+
+    scans = []
+    observation_refs = {}
+    for log in logs:
+        scan_starts = [item for item in log.events if item.kind == "scan_started"]
+        for scan_start in scan_starts:
+            scan_id = str(scan_start.data["scan_id"])
+            works = {
+                str(item.data["photo_id"]): item
+                for item in log.events
+                if item.kind == "work_observed" and item.data["scan_id"] == scan_id
+            }
+            issues = {
+                str(item.data["photo_id"])
+                for item in log.events
+                if item.kind == "scan_issue" and item.data["scan_id"] == scan_id
+            }
+            refs = []
+            pairs = []
+            by_photo = {photo_id: [] for photo_id in photo_ids}
+            for index, item in enumerate(log.events):
+                if item.kind != "received_like_observed" or item.data["scan_id"] != scan_id:
+                    continue
+                photo_id = str(item.data["photo_id"])
+                if photo_id not in by_photo:
+                    continue
+                reference = f"{log.run_id}:{index}"
+                photographer_id = str(item.data["photographer_id"])
+                refs.append(reference)
+                pairs.append((photo_id, photographer_id))
+                by_photo[photo_id].append(photographer_id)
+                observation_refs[reference] = item
+            complete = set(photo_ids).issubset(works) and not (set(photo_ids) & issues)
+            scans.append({
+                "run_id": log.run_id,
+                "scan_id": scan_id,
+                "started_at": scan_start.occurred_at,
+                "completed_at": log.ended_at,
+                "owner_id": str(scan_start.data["owner_id"]),
+                "works": works,
+                "complete": complete,
+                "pairs": pairs,
+                "refs": refs,
+                "by_photo": by_photo,
+            })
+    baseline_candidates = [item for item in scans if item["complete"] and item["started_at"] < like_completed_at]
+    review_candidates = [
+        item for item in scans
+        if item["complete"] and like_completed_at < item["started_at"] <= like_completed_at + WINDOW
+    ]
+    baseline = max(baseline_candidates, key=lambda item: item["started_at"], default=None)
+    review = min(review_candidates, key=lambda item: item["started_at"], default=None)
+    attribution_eligible = baseline is not None
+    source_digest = _canonical_digest([
+        {
+            "run_id": log.run_id,
+            "ended_at": log.ended_at.isoformat(),
+            "events": [
+                {"kind": item.kind, "occurred_at": item.occurred_at.isoformat(), "data": item.data}
+                for item in log.events
+            ],
+        }
+        for log in logs
+    ])
+    payload = {
+        "mapped_run_ids": mapped_run_ids,
+        "showcase_photo_ids": photo_ids,
+        "like_completed_at": like_completed_at.isoformat(),
+        "touch_action_ids": touch_action_ids,
+        "episode_ids": episode_ids,
+        "baseline": None if baseline is None else {
+            "run_id": baseline["run_id"],
+            "scan_id": baseline["scan_id"],
+            "started_at": baseline["started_at"].isoformat(),
+            "owner_id": baseline["owner_id"],
+            "pairs": [list(pair) for pair in baseline["pairs"]],
+        },
+        "review_1d": None if review is None else {
+            "run_id": review["run_id"],
+            "scan_id": review["scan_id"],
+            "started_at": review["started_at"].isoformat(),
+            "completed_at": review["completed_at"].isoformat(),
+            "observation_refs": review["refs"],
+            "by_photo": review["by_photo"],
+        },
+        "attribution_eligible": attribution_eligible,
+        "source_log_digest": source_digest,
+    }
+    payload["analysis_digest"] = _canonical_digest(payload)
+    return payload
+
+
+def command_cycle_migrate_analyze(args) -> int:
+    root = _state_root(args.state_root)
+    analysis = _migration_analysis(root, args.mapped_run_id, args.photo_id)
+    _json({"ok": True, **analysis})
+    return 0
+
+
+def command_cycle_migrate_apply(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    if checkpoint.header.mode != "migration":
+        return _error("migration_transaction_required")
+    analysis = _migration_analysis(root, args.mapped_run_id, args.photo_id)
+    if analysis["analysis_digest"] != args.analysis_digest:
+        return _error("migration_analysis_changed", current_digest=analysis["analysis_digest"])
+    requested_eligible = args.confirm_attribution_eligible == "true"
+    if requested_eligible != analysis["attribution_eligible"]:
+        return _error("attribution_confirmation_mismatch", analyzed=analysis["attribution_eligible"])
+    if any(item.kind == "cycle_started" for item in checkpoint.events):
+        return _error("migration_already_applied")
+
+    cycle_id = args.cycle_id
+    photo_ids = list(analysis["showcase_photo_ids"])
+    baseline = analysis["baseline"]
+    additions = [Event("cycle_started", now, {"cycle_id": cycle_id, "attribution_eligible": requested_eligible})]
+    owner_id = str(baseline["owner_id"]) if baseline else "unknown"
+    work_urls = {}
+    if baseline:
+        source = _sealed_runs_by_id(root)[baseline["run_id"]]
+        work_urls = {
+            str(item.data["photo_id"]): str(item.data["photo_url"])
+            for item in source.events
+            if item.kind == "work_observed" and item.data["scan_id"] == baseline["scan_id"]
+        }
+    for position, photo_id in enumerate(photo_ids, 1):
+        additions.append(Event("cycle_showcase_observed", now, {
+            "cycle_id": cycle_id,
+            "photo_id": photo_id,
+            "photo_url": work_urls.get(photo_id, f"https://500px.com.cn/photo/{photo_id}"),
+            "owner_id": owner_id,
+            "visibility": "public",
+            "position": position,
+            "evidence_summary": "legacy homepage scope confirmed by user",
+        }))
+    showcase_digest = _canonical_digest(photo_ids)
+    additions.append(Event("cycle_showcase_frozen", now, {"cycle_id": cycle_id, "photo_ids": photo_ids, "showcase_digest": showcase_digest}))
+    baseline_digest = _canonical_digest({"photo_ids": photo_ids, "pairs": baseline["pairs"] if baseline else []})
+    if baseline:
+        additions.append(Event("cycle_baseline_scan_started", now, {"cycle_id": cycle_id, "scan_id": baseline["scan_id"]}))
+        for photo_id, photographer_id in baseline["pairs"]:
+            additions.append(Event("cycle_baseline_like_observed", now, {
+                "cycle_id": cycle_id,
+                "scan_id": baseline["scan_id"],
+                "photo_id": photo_id,
+                "photographer_id": photographer_id,
+                "display_name": photographer_id,
+                "profile_url": "",
+            }))
+        for photo_id in photo_ids:
+            count = sum(pair[0] == photo_id for pair in baseline["pairs"])
+            additions.append(Event("cycle_baseline_photo_completed", now, {"cycle_id": cycle_id, "scan_id": baseline["scan_id"], "photo_id": photo_id, "liker_count": count}))
+        additions.append(Event("cycle_baseline_completed", now, {"cycle_id": cycle_id, "scan_id": baseline["scan_id"], "baseline_digest": baseline_digest}))
+    like_completed_at = datetime.fromisoformat(str(analysis["like_completed_at"]))
+    additions.append(Event("cycle_like_completed", now, {
+        "cycle_id": cycle_id,
+        "mapped_run_ids": list(analysis["mapped_run_ids"]),
+        "touch_action_ids": list(analysis["touch_action_ids"]),
+        "episode_ids": list(analysis["episode_ids"]),
+        "like_completed_at": analysis["like_completed_at"],
+        "terminal_status": "completed",
+    }))
+    requests = build_review_requests(cycle_id, like_completed_at, root)
+    review = analysis["review_1d"]
+    if review:
+        additions.append(_schedule_event(requests[0], root, now))
+        started_at = datetime.fromisoformat(str(review["started_at"]))
+        additions.append(Event("review_started", started_at, {"cycle_id": cycle_id, "review_kind": "review_1d", "attempt": 1, "due_at": requests[0].due_at.isoformat(), "started_at": started_at.isoformat()}))
+        for photo_id in photo_ids:
+            additions.append(Event("review_photo_observed", datetime.fromisoformat(str(review["completed_at"])), {
+                "cycle_id": cycle_id,
+                "review_kind": "review_1d",
+                "attempt": 1,
+                "scan_id": review["scan_id"],
+                "photo_id": photo_id,
+                "photographer_ids": list(dict.fromkeys(review["by_photo"][photo_id])),
+                "observed_at": review["completed_at"],
+            }))
+        additions.append(Event("review_completed", datetime.fromisoformat(str(review["completed_at"])), {"cycle_id": cycle_id, "review_kind": "review_1d", "attempt": 1, "scan_id": review["scan_id"], "completed_at": review["completed_at"]}))
+    additions.append(_schedule_event(requests[1], root, now))
+    mapping_digest = _canonical_digest({"analysis_digest": analysis["analysis_digest"], "cycle_id": cycle_id})
+    additions.append(Event("cycle_attribution_scope_mapped", now, {
+        "cycle_id": cycle_id,
+        "mapped_run_ids": list(analysis["mapped_run_ids"]),
+        "showcase_photo_ids": photo_ids,
+        "touch_action_ids": list(analysis["touch_action_ids"]),
+        "episode_ids": list(analysis["episode_ids"]),
+        "observation_refs": list(review["observation_refs"]) if review else [],
+        "attribution_eligible": requested_eligible,
+        "mapping_digest": mapping_digest,
+    }))
+    append_checkpoint_events(root, args.run_id, additions)
+    _json({"ok": True, "cycle_id": cycle_id, "event_count": len(additions), "review_3d_request": requests[1].payload, "review_3d_payload_digest": requests[1].payload_digest, "mapping_digest": mapping_digest})
+    return 0
+
+
 def command_preview(args) -> int:
     root = _state_root(args.state_root)
     now = _now(args.now)
@@ -1319,6 +1543,21 @@ def build_parser() -> argparse.ArgumentParser:
     review_fail.add_argument("--reason", required=True)
     _add_common(review_fail)
 
+    migrate_analyze = commands.add_parser("cycle-migrate-analyze")
+    migrate_analyze.add_argument("--mapped-run-id", action="append", default=[], required=True)
+    migrate_analyze.add_argument("--photo-id", action="append", default=[], required=True)
+    migrate_analyze.add_argument("--json", action="store_true")
+    _add_common(migrate_analyze)
+
+    migrate_apply = commands.add_parser("cycle-migrate-apply")
+    migrate_apply.add_argument("--run-id", required=True)
+    migrate_apply.add_argument("--cycle-id", required=True)
+    migrate_apply.add_argument("--mapped-run-id", action="append", default=[], required=True)
+    migrate_apply.add_argument("--photo-id", action="append", default=[], required=True)
+    migrate_apply.add_argument("--analysis-digest", required=True)
+    migrate_apply.add_argument("--confirm-attribution-eligible", choices=("true", "false"), required=True)
+    _add_common(migrate_apply)
+
     preview = commands.add_parser("preview")
     preview.add_argument("--run-id", required=True)
     preview.add_argument("--seed", type=int, required=True)
@@ -1370,6 +1609,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "review-photo-observe": command_review_photo_observe,
         "review-finish": command_review_finish,
         "review-fail": command_review_fail,
+        "cycle-migrate-analyze": command_cycle_migrate_analyze,
+        "cycle-migrate-apply": command_cycle_migrate_apply,
         "preview": command_preview,
         "latest-preview": command_latest_preview,
         "approve": command_approve,
