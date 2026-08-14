@@ -8,10 +8,15 @@ from feedback_growth.analytics import matured_cohort_kpi
 from feedback_growth.dashboard import build_dashboard_view_model, render_dashboard
 from feedback_growth.model import (
     AggregateState,
+    CycleObservation,
     DailyTaskStats,
+    EpisodeEvidence,
+    FeedbackCycle,
     FeedbackEpisode,
     OutgoingTouch,
     PhotographerStats,
+    ReviewAttempt,
+    ReviewSlot,
 )
 from tests.helpers import dt
 
@@ -53,6 +58,38 @@ def state_with_tasks(*tasks, paused_reason=None):
 
 
 class DashboardTest(unittest.TestCase):
+    def test_cycle_view_shows_frozen_five_and_review_slots(self):
+        touch_at = dt(13, 7)
+        episode = FeedbackEpisode("e1", "p1", ("a1",), touch_at, touch_at, touch_at + timedelta(hours=72), "success", touch_at + timedelta(hours=19), 1)
+        evidence = EpisodeEvidence("e1", "p1", "success", episode.expires_at, touch_at + timedelta(hours=19), 1, 1)
+        photographer = PhotographerStats("p1", "p1", "", frozenset(), {}, False, (episode,), (evidence,), None, (), 1, 0, False)
+        attempt_1d = ReviewAttempt(1, "completed", touch_at + timedelta(hours=20), None, touch_at + timedelta(hours=19), touch_at + timedelta(hours=19, minutes=10), None, frozenset(f"work-{index}" for index in range(1, 6)))
+        attempt_3d = ReviewAttempt(1, "pending", touch_at + timedelta(hours=70), None, None, None, None, frozenset())
+        cycle = FeedbackCycle(
+            "cycle-1",
+            True,
+            tuple(f"work-{index}" for index in range(1, 6)),
+            frozenset({("work-1", "old")}),
+            ("a1",),
+            (CycleObservation("work-1", "p1", touch_at + timedelta(hours=19), "review:1"),),
+            touch_at,
+            ReviewSlot("review_1d", "completed", attempt_1d.due_at, (attempt_1d,), attempt_1d.completed_at),
+            ReviewSlot("review_3d", "pending", attempt_3d.due_at, (attempt_3d,), None),
+            "reviews_scheduled",
+        )
+        state = AggregateState(
+            {"p1": photographer}, frozenset(), {"2026-08-13": daily("2026-08-13", 100, 100, completed_at=touch_at)}, None,
+            {"e1": episode}, (OutgoingTouch("a1", "p1", "target", touch_at, "e1", "new"),), {"cycle-1": cycle}, "cycle-1"
+        )
+
+        view = build_dashboard_view_model(state, touch_at + timedelta(hours=20))
+
+        self.assertEqual(view["cycle"]["showcase_count"], 5)
+        self.assertEqual(view["cycle"]["review_1d"]["status"], "completed")
+        self.assertEqual(view["cycle"]["review_3d"]["status"], "pending")
+        self.assertEqual(view["cycle"]["works"][0]["new_liker_count"], 1)
+        self.assertEqual(view["cycle"]["settlement"]["status"], "open")
+
     def test_template_has_redesign_quality_and_accessibility_contract(self):
         template = TEMPLATE.read_text(encoding="utf-8")
 
@@ -245,7 +282,10 @@ class DashboardTest(unittest.TestCase):
             baseline_work_positions={},
             historical_high_potential=True,
             episodes=(first, second),
-            eligible_episodes=(),
+            eligible_episodes=(
+                EpisodeEvidence("e1", "p1", "success", first.expires_at, first.feedback_first_seen_at, 1, 1),
+                EpisodeEvidence("e2", "p1", "success", second.expires_at, second.feedback_first_seen_at, 1, 1),
+            ),
             last_comment_at=None,
             today_like_photo_ids=(),
             success_count_30d=2,

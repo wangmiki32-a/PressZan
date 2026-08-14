@@ -357,11 +357,15 @@ def beta_parameters(stats: PhotographerStats, now: datetime) -> Tuple[float, flo
 
 def matured_cohort_counts(state: AggregateState, now: datetime) -> Tuple[int, int]:
     start = now - ROLLING
-    evidence_by_episode = {
-        episode.episode_id: episode
-        for stats in state.photographers.values()
-        for episode in stats.eligible_episodes
-    }
+    evidence_by_episode = (
+        {
+            episode.episode_id: episode
+            for stats in state.photographers.values()
+            for episode in stats.eligible_episodes
+        }
+        if state.cycles
+        else dict(state.episodes)
+    )
     touches = [
         touch
         for touch in state.outgoing_touches

@@ -228,6 +228,34 @@
       text-align: right;
     }
     .section-head.stacked .section-note { margin-top: 10px; text-align: left; }
+    .cycle-strip {
+      display: grid;
+      grid-template-columns: 1.15fr repeat(3, minmax(150px, .7fr));
+      border: 1px solid var(--line-strong);
+      border-left: 4px solid var(--accent);
+    }
+    .cycle-cell {
+      min-height: 108px;
+      padding: 22px 24px;
+      border-right: 1px solid var(--line);
+    }
+    .cycle-cell:last-child { border-right: 0; }
+    .cycle-cell span { display: block; color: var(--muted); font: 10px/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+    .cycle-cell strong { display: block; margin-top: 14px; font: 500 19px/1.15 var(--display); }
+    .cycle-cell small { display: block; margin-top: 6px; color: var(--muted); font: 10px/1.4 var(--mono); }
+    .cycle-works { margin-top: 18px; border-top: 1px solid var(--line); }
+    .cycle-work {
+      display: grid;
+      grid-template-columns: 48px minmax(140px, 1fr) 120px 120px;
+      gap: 18px;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+      font: 11px/1.3 var(--mono);
+    }
+    .cycle-work .photo-id { overflow: hidden; color: var(--ink-soft); text-overflow: ellipsis; white-space: nowrap; }
+    .cycle-work strong { text-align: right; }
+    .cycle-work .new { color: var(--accent); }
     .chart-key {
       display: flex;
       flex-wrap: wrap;
@@ -500,6 +528,10 @@
       .side-metric dd { font-size: 36px; }
       .quota { gap: 3px; }
       .history-summary { grid-template-columns: 1fr; }
+      .cycle-strip { grid-template-columns: 1fr; }
+      .cycle-cell { border-right: 0; border-bottom: 1px solid var(--line); }
+      .cycle-cell:last-child { border-bottom: 0; }
+      .cycle-work { grid-template-columns: 36px minmax(100px, 1fr) 70px 70px; gap: 8px; }
       .history-metric { border-right: 0; border-bottom: 1px solid var(--line); }
       .history-metric:last-child { border-bottom: 0; }
     }
@@ -529,6 +561,17 @@
           <div class="side-metric"><dt>30 天独立回馈率</dt><dd id="kpi">待成熟</dd><small id="kpi-detail">成熟窗口 0 / 0</small></div>
           <div class="side-metric"><dt>Verified 群体</dt><dd id="verified">0</dd><small>滚动 30 天验证</small></div>
         </dl>
+      </section>
+
+      <section class="section" id="cycle-section" aria-labelledby="cycle-title" hidden>
+        <div class="section-head">
+          <div>
+            <h2 id="cycle-title">本轮公开作品周期</h2>
+            <p class="section-note">点赞开始时冻结 5 张；回顾只读取这 5 张的新点赞者。</p>
+          </div>
+        </div>
+        <div class="cycle-strip" id="cycle-strip"></div>
+        <div class="cycle-works" id="cycle-works"></div>
       </section>
 
       <section class="section" aria-labelledby="trend-title">
@@ -629,6 +672,18 @@
       const nextTheme = currentTheme === "dark" ? "light" : "dark";
       setTheme(nextTheme);
     });
+
+    if (data.cycle) {
+      const cycle = data.cycle;
+      const reviewNames = { not_scheduled: "未安排", pending: "待执行", running: "执行中", completed: "已完成", failed: "失败", superseded: "已被 3 日回顾覆盖" };
+      document.getElementById("cycle-section").hidden = false;
+      document.getElementById("cycle-strip").innerHTML = `
+        <div class="cycle-cell"><span>周期</span><strong>${esc(cycle.cycle_id)}</strong><small>${cycle.showcase_count}/5 张已冻结 · ${cycle.attribution_eligible ? "可进入归因" : "仅观察"}</small></div>
+        <div class="cycle-cell"><span>点赞完成</span><strong>${cycle.like_completed_at ? esc(new Date(cycle.like_completed_at).toLocaleString("zh-CN", { hour12: false })) : "尚未完成"}</strong><small>回顾时间以最后一次确认点赞为基准</small></div>
+        <div class="cycle-cell"><span>1 日回顾 · +20h</span><strong>${esc(reviewNames[cycle.review_1d.status] || cycle.review_1d.status)}</strong><small>${esc(cycle.review_1d.resolved_at || cycle.review_1d.due_at || "未安排")}</small></div>
+        <div class="cycle-cell"><span>3 日回顾 · +70h</span><strong>${esc(reviewNames[cycle.review_3d.status] || cycle.review_3d.status)}</strong><small>${esc(cycle.review_3d.resolved_at || cycle.review_3d.due_at || "未安排")}</small></div>`;
+      document.getElementById("cycle-works").innerHTML = cycle.works.map(item => `<div class="cycle-work"><span>#${item.position}</span><span class="photo-id" title="${esc(item.photo_id)}">${esc(item.photo_id)}</span><strong>基线 ${item.baseline_liker_count}</strong><strong class="new">新增 ${item.new_liker_count}</strong></div>`).join("");
+    }
 
     const trend = document.getElementById("trend");
     const trendPoints = data.trend_chart.points;
