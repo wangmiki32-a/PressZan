@@ -131,6 +131,45 @@ def _digest(plan: Sequence[Mapping[str, object]]) -> str:
     return hashlib.sha256(_canonical_plan(plan).encode("utf-8")).hexdigest()
 
 
+def _canonical_digest(value: object) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _cycle_events(logs: Iterable[RunLog], cycle_id: str) -> List[Event]:
+    events = [
+        item
+        for log in logs
+        for item in log.events
+        if item.data.get("cycle_id") == cycle_id
+    ]
+    events.sort(key=lambda item: item.occurred_at)
+    return events
+
+
+def _require_cycle_checkpoint(root: Path, run_id: str, cycle_id: str):
+    checkpoint = read_checkpoint(root, run_id)
+    if checkpoint.header.mode not in {"cycle", "migration"}:
+        raise CliError("cycle_transaction_required")
+    if checkpoint.header.transaction_context.get("cycle_id") != cycle_id:
+        raise CliError("cycle_context_mismatch")
+    return checkpoint
+
+
+def _cycle_showcase(events: Sequence[Event]) -> List[Event]:
+    return [item for item in events if item.kind == "cycle_showcase_observed"]
+
+
+def _frozen_photo_ids(events: Sequence[Event]) -> Tuple[str, ...]:
+    frozen = [item for item in events if item.kind == "cycle_showcase_frozen"]
+    return tuple(str(value) for value in frozen[-1].data["photo_ids"]) if frozen else ()
+
+
+def _baseline_digest(events: Sequence[Event]) -> Optional[str]:
+    completed = [item for item in events if item.kind == "cycle_baseline_completed"]
+    return str(completed[-1].data["baseline_digest"]) if completed else None
+
+
 def _quota_snapshot(state, now: datetime) -> Mapping[str, object]:
     daily = state.daily_tasks.get(_day(now))
     return {
@@ -232,6 +271,25 @@ def command_begin(args) -> int:
     if args.mode == "run" and not args.approve_preview and not _events_have_approval(effective):
         return _error("preflight_required")
     state = rebuild_state(effective, now)
+    if args.mode == "run" and args.cycle_id:
+        cycle = state.cycles.get(args.cycle_id)
+        if cycle is None:
+            return _error("cycle_not_found")
+        if cycle.status != "baseline_ready":
+            return _error("cycle_baseline_not_ready", status=cycle.status)
+        unsettled = [
+            item.cycle_id
+            for item in state.cycles.values()
+            if item.cycle_id != args.cycle_id and item.status not in {"settled", "abandoned"}
+        ]
+        if unsettled:
+            return _error("previous_cycle_unsettled", cycle_ids=sorted(unsettled))
+        sealed_events = _cycle_events(iter_sealed_logs(root), args.cycle_id)
+        digest = _baseline_digest(sealed_events)
+        if digest is None:
+            return _error("cycle_baseline_not_sealed")
+        if any(item.kind == "cycle_run_bound" for item in sealed_events):
+            return _error("cycle_run_already_bound")
     daily = state.daily_tasks.get(_day(now))
     if args.mode == "run" and daily and daily.confirmed_likes >= DAILY_TARGET:
         return _error("daily_complete")
@@ -249,6 +307,23 @@ def command_begin(args) -> int:
             context,
         ),
     )
+    if args.mode == "run" and args.cycle_id:
+        append_checkpoint_events(
+            root,
+            run_id,
+            (
+                Event(
+                    "cycle_run_bound",
+                    now,
+                    {
+                        "cycle_id": args.cycle_id,
+                        "run_id": run_id,
+                        "baseline_digest": digest,
+                        "bound_at": now.isoformat(),
+                    },
+                ),
+            ),
+        )
     if args.mode in {"run", "preflight"}:
         _append_expired_episodes(root, run_id, now, state)
     remaining = DAILY_TARGET - (daily.confirmed_likes if daily else 0)
@@ -377,6 +452,239 @@ def command_event(args) -> int:
                 )
     append_checkpoint_events(root, args.run_id, additions)
     _json({"ok": True, "appended": [item.kind for item in additions]})
+    return 0
+
+
+def command_cycle_start(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    if any(item.kind == "cycle_started" for item in checkpoint.events):
+        return _error("cycle_already_started")
+    if args.attribution_eligible not in {"true", "false"}:
+        return _error("invalid_attribution_eligible")
+    existing = rebuild_state(load_effective_runs(root), now).cycles
+    if args.cycle_id in existing:
+        return _error("cycle_already_exists")
+    unsettled = [
+        item.cycle_id for item in existing.values() if item.status not in {"settled", "abandoned"}
+    ]
+    if unsettled:
+        return _error("previous_cycle_unsettled", cycle_ids=sorted(unsettled))
+    append_checkpoint_events(
+        root,
+        args.run_id,
+        (
+            Event(
+                "cycle_started",
+                now,
+                {
+                    "cycle_id": args.cycle_id,
+                    "attribution_eligible": args.attribution_eligible == "true",
+                },
+            ),
+        ),
+    )
+    _json({"ok": True, "cycle_id": args.cycle_id, "status": "preparing"})
+    return 0
+
+
+def command_cycle_showcase_observe(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    if not any(item.kind == "cycle_started" for item in checkpoint.events):
+        return _error("cycle_not_started")
+    if any(item.kind == "cycle_showcase_frozen" for item in checkpoint.events):
+        return _error("showcase_already_frozen")
+    if args.position < 1 or args.position > 5:
+        return _error("invalid_showcase_position")
+    append_checkpoint_events(
+        root,
+        args.run_id,
+        (
+            Event(
+                "cycle_showcase_observed",
+                now,
+                {
+                    "cycle_id": args.cycle_id,
+                    "photo_id": args.photo_id,
+                    "photo_url": args.photo_url,
+                    "owner_id": args.owner_id,
+                    "visibility": args.visibility,
+                    "position": args.position,
+                    "evidence_summary": args.evidence_summary,
+                },
+            ),
+        ),
+    )
+    _json({"ok": True, "photo_id": args.photo_id, "position": args.position})
+    return 0
+
+
+def command_cycle_showcase_freeze(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    if any(item.kind == "cycle_showcase_frozen" for item in checkpoint.events):
+        return _error("showcase_already_frozen")
+    observed = _cycle_showcase(checkpoint.events)
+    photo_ids = [str(item.data["photo_id"]) for item in observed]
+    positions = [int(item.data["position"]) for item in observed]
+    owners = {str(item.data["owner_id"]) for item in observed}
+    if len(observed) != 5 or len(set(photo_ids)) != 5 or sorted(positions) != [1, 2, 3, 4, 5]:
+        return _error("showcase_requires_exactly_five")
+    if len(owners) != 1 or (args.owner_id and owners != {args.owner_id}):
+        return _error("showcase_owner_mismatch")
+    if any(item.data["visibility"] != "public" for item in observed):
+        return _error("showcase_not_public")
+    ordered = [
+        str(item.data["photo_id"])
+        for item in sorted(observed, key=lambda value: int(value.data["position"]))
+    ]
+    digest = _canonical_digest(ordered)
+    append_checkpoint_events(
+        root,
+        args.run_id,
+        (Event("cycle_showcase_frozen", now, {"cycle_id": args.cycle_id, "photo_ids": ordered, "showcase_digest": digest}),),
+    )
+    _json({"ok": True, "cycle_id": args.cycle_id, "photo_ids": ordered, "showcase_digest": digest})
+    return 0
+
+
+def command_cycle_baseline_start(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    if not _frozen_photo_ids(checkpoint.events):
+        return _error("showcase_not_frozen")
+    if any(item.kind == "cycle_baseline_completed" for item in checkpoint.events):
+        return _error("baseline_already_completed")
+    if any(item.kind == "cycle_baseline_scan_started" and item.data["scan_id"] == args.scan_id for item in checkpoint.events):
+        _json({"ok": True, "scan_id": args.scan_id, "resumed": True})
+        return 0
+    append_checkpoint_events(root, args.run_id, (Event("cycle_baseline_scan_started", now, {"cycle_id": args.cycle_id, "scan_id": args.scan_id}),))
+    _json({"ok": True, "scan_id": args.scan_id, "resumed": False})
+    return 0
+
+
+def _require_baseline_scan(checkpoint, cycle_id: str, scan_id: str) -> Tuple[str, ...]:
+    if not any(item.kind == "cycle_baseline_scan_started" and item.data["scan_id"] == scan_id for item in checkpoint.events):
+        raise CliError("baseline_scan_not_started")
+    frozen = _frozen_photo_ids(checkpoint.events)
+    if not frozen:
+        raise CliError("showcase_not_frozen")
+    return frozen
+
+
+def command_cycle_baseline_observe(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    frozen = _require_baseline_scan(checkpoint, args.cycle_id, args.scan_id)
+    if args.photo_id not in frozen:
+        return _error("photo_not_in_showcase")
+    duplicate = any(
+        item.kind == "cycle_baseline_like_observed"
+        and item.data["scan_id"] == args.scan_id
+        and item.data["photo_id"] == args.photo_id
+        and item.data["photographer_id"] == args.photographer_id
+        for item in checkpoint.events
+    )
+    if duplicate:
+        _json({"ok": True, "duplicate": True})
+        return 0
+    append_checkpoint_events(
+        root,
+        args.run_id,
+        (
+            Event(
+                "cycle_baseline_like_observed",
+                now,
+                {
+                    "cycle_id": args.cycle_id,
+                    "scan_id": args.scan_id,
+                    "photo_id": args.photo_id,
+                    "photographer_id": args.photographer_id,
+                    "display_name": args.display_name,
+                    "profile_url": args.profile_url,
+                },
+            ),
+        ),
+    )
+    _json({"ok": True, "duplicate": False})
+    return 0
+
+
+def command_cycle_baseline_photo_complete(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    frozen = _require_baseline_scan(checkpoint, args.cycle_id, args.scan_id)
+    if args.photo_id not in frozen:
+        return _error("photo_not_in_showcase")
+    observed = {
+        str(item.data["photographer_id"])
+        for item in checkpoint.events
+        if item.kind == "cycle_baseline_like_observed"
+        and item.data["scan_id"] == args.scan_id
+        and item.data["photo_id"] == args.photo_id
+    }
+    if args.liker_count != len(observed):
+        return _error("liker_count_mismatch", observed=len(observed))
+    prior = [
+        item for item in checkpoint.events
+        if item.kind == "cycle_baseline_photo_completed"
+        and item.data["scan_id"] == args.scan_id
+        and item.data["photo_id"] == args.photo_id
+    ]
+    if prior:
+        if int(prior[-1].data["liker_count"]) != args.liker_count:
+            return _error("baseline_photo_conflict")
+        _json({"ok": True, "duplicate": True})
+        return 0
+    append_checkpoint_events(root, args.run_id, (Event("cycle_baseline_photo_completed", now, {"cycle_id": args.cycle_id, "scan_id": args.scan_id, "photo_id": args.photo_id, "liker_count": args.liker_count}),))
+    _json({"ok": True, "duplicate": False})
+    return 0
+
+
+def command_cycle_baseline_complete(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = _require_cycle_checkpoint(root, args.run_id, args.cycle_id)
+    frozen = _require_baseline_scan(checkpoint, args.cycle_id, args.scan_id)
+    completed = {
+        str(item.data["photo_id"]): int(item.data["liker_count"])
+        for item in checkpoint.events
+        if item.kind == "cycle_baseline_photo_completed" and item.data["scan_id"] == args.scan_id
+    }
+    if set(completed) != set(frozen):
+        return _error("baseline_incomplete", missing_photo_ids=sorted(set(frozen) - set(completed)))
+    pairs = sorted(
+        (str(item.data["photo_id"]), str(item.data["photographer_id"]))
+        for item in checkpoint.events
+        if item.kind == "cycle_baseline_like_observed" and item.data["scan_id"] == args.scan_id
+    )
+    digest = _canonical_digest({"photo_ids": list(frozen), "pairs": pairs, "counts": completed})
+    append_checkpoint_events(root, args.run_id, (Event("cycle_baseline_completed", now, {"cycle_id": args.cycle_id, "scan_id": args.scan_id, "baseline_digest": digest}),))
+    _json({"ok": True, "cycle_id": args.cycle_id, "baseline_digest": digest, "status": "baseline_ready"})
+    return 0
+
+
+def command_cycle_status(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    cycle = rebuild_state(load_effective_runs(root), now).cycles.get(args.cycle_id)
+    if cycle is None:
+        return _error("cycle_not_found")
+    _json({
+        "ok": True,
+        "cycle_id": cycle.cycle_id,
+        "status": cycle.status,
+        "attribution_eligible": cycle.attribution_eligible,
+        "showcase_photo_ids": list(cycle.showcase_photo_ids),
+        "baseline_pair_count": len(cycle.baseline_pairs),
+    })
     return 0
 
 
@@ -589,6 +897,64 @@ def build_parser() -> argparse.ArgumentParser:
     event.add_argument("--field", action="append", default=[])
     _add_common(event)
 
+    cycle_start = commands.add_parser("cycle-start")
+    cycle_start.add_argument("--run-id", required=True)
+    cycle_start.add_argument("--cycle-id", required=True)
+    cycle_start.add_argument("--attribution-eligible", default="true")
+    _add_common(cycle_start)
+
+    showcase_observe = commands.add_parser("cycle-showcase-observe")
+    showcase_observe.add_argument("--run-id", required=True)
+    showcase_observe.add_argument("--cycle-id", required=True)
+    showcase_observe.add_argument("--photo-id", required=True)
+    showcase_observe.add_argument("--photo-url", required=True)
+    showcase_observe.add_argument("--owner-id", required=True)
+    showcase_observe.add_argument("--visibility", choices=("public",), required=True)
+    showcase_observe.add_argument("--position", type=int, required=True)
+    showcase_observe.add_argument("--evidence-summary", required=True)
+    _add_common(showcase_observe)
+
+    showcase_freeze = commands.add_parser("cycle-showcase-freeze")
+    showcase_freeze.add_argument("--run-id", required=True)
+    showcase_freeze.add_argument("--cycle-id", required=True)
+    showcase_freeze.add_argument("--owner-id")
+    _add_common(showcase_freeze)
+
+    baseline_start = commands.add_parser("cycle-baseline-start")
+    baseline_start.add_argument("--run-id", required=True)
+    baseline_start.add_argument("--cycle-id", required=True)
+    baseline_start.add_argument("--scan-id", required=True)
+    _add_common(baseline_start)
+
+    baseline_observe = commands.add_parser("cycle-baseline-observe")
+    baseline_observe.add_argument("--run-id", required=True)
+    baseline_observe.add_argument("--cycle-id", required=True)
+    baseline_observe.add_argument("--scan-id", required=True)
+    baseline_observe.add_argument("--photo-id", required=True)
+    baseline_observe.add_argument("--photographer-id", required=True)
+    baseline_observe.add_argument("--display-name", required=True)
+    baseline_observe.add_argument("--profile-url", required=True)
+    _add_common(baseline_observe)
+
+    baseline_photo = commands.add_parser("cycle-baseline-photo-complete")
+    baseline_photo.add_argument("--run-id", required=True)
+    baseline_photo.add_argument("--cycle-id", required=True)
+    baseline_photo.add_argument("--scan-id", required=True)
+    baseline_photo.add_argument("--photo-id", required=True)
+    baseline_photo.add_argument("--liker-count", type=int, required=True)
+    _add_common(baseline_photo)
+
+    baseline_complete = commands.add_parser("cycle-baseline-complete")
+    baseline_complete.add_argument("--run-id", required=True)
+    baseline_complete.add_argument("--cycle-id", required=True)
+    baseline_complete.add_argument("--scan-id", required=True)
+    _add_common(baseline_complete)
+
+    cycle_status = commands.add_parser("cycle-status")
+    cycle_status.add_argument("--cycle-id", required=True)
+    cycle_status.add_argument("--json", action="store_true")
+    _add_common(cycle_status)
+
     preview = commands.add_parser("preview")
     preview.add_argument("--run-id", required=True)
     preview.add_argument("--seed", type=int, required=True)
@@ -626,6 +992,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "begin": command_begin,
         "resume": command_resume,
         "event": command_event,
+        "cycle-start": command_cycle_start,
+        "cycle-showcase-observe": command_cycle_showcase_observe,
+        "cycle-showcase-freeze": command_cycle_showcase_freeze,
+        "cycle-baseline-start": command_cycle_baseline_start,
+        "cycle-baseline-observe": command_cycle_baseline_observe,
+        "cycle-baseline-photo-complete": command_cycle_baseline_photo_complete,
+        "cycle-baseline-complete": command_cycle_baseline_complete,
+        "cycle-status": command_cycle_status,
         "preview": command_preview,
         "latest-preview": command_latest_preview,
         "approve": command_approve,

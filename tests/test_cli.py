@@ -105,6 +105,102 @@ def seed_approved_likes(root, count, base_time, daily_task_id, *, offset=0, run_
 
 
 class CliTest(unittest.TestCase):
+    def _begin_cycle(self, root, cycle_id="c1", count=5):
+        now = "2026-08-14T09:00:00+00:00"
+        result, begun = invoke(root, "begin", "--mode", "cycle", "--cycle-id", cycle_id, "--now", now)
+        self.assertEqual(result.returncode, 0, begun)
+        result, payload = invoke(root, "cycle-start", "--run-id", begun["run_id"], "--cycle-id", cycle_id, "--now", now)
+        self.assertEqual(result.returncode, 0, payload)
+        for position in range(1, count + 1):
+            result, payload = invoke(
+                root,
+                "cycle-showcase-observe",
+                "--run-id",
+                begun["run_id"],
+                "--cycle-id",
+                cycle_id,
+                "--photo-id",
+                f"work-{position}",
+                "--photo-url",
+                f"https://500px.test/photo/work-{position}",
+                "--owner-id",
+                "owner-1",
+                "--visibility",
+                "public",
+                "--position",
+                str(position),
+                "--evidence-summary",
+                "homepage card visible",
+                "--now",
+                now,
+            )
+            self.assertEqual(result.returncode, 0, payload)
+        return begun
+
+    def test_cycle_showcase_freeze_requires_exactly_five(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            begun = self._begin_cycle(root, count=4)
+
+            result, payload = invoke(
+                root,
+                "cycle-showcase-freeze",
+                "--run-id",
+                begun["run_id"],
+                "--cycle-id",
+                "c1",
+                "--owner-id",
+                "owner-1",
+                "--now",
+                "2026-08-14T09:01:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "showcase_requires_exactly_five")
+
+    def test_cycle_baseline_accepts_five_zero_liker_works_and_binds_run(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            begun = self._begin_cycle(root)
+            common = (
+                "--run-id",
+                begun["run_id"],
+                "--cycle-id",
+                "c1",
+                "--now",
+                "2026-08-14T09:01:00+00:00",
+            )
+            result, frozen = invoke(root, "cycle-showcase-freeze", *common, "--owner-id", "owner-1")
+            self.assertEqual(result.returncode, 0, frozen)
+            result, payload = invoke(root, "cycle-baseline-start", *common, "--scan-id", "scan-1")
+            self.assertEqual(result.returncode, 0, payload)
+            for photo_id in frozen["photo_ids"]:
+                result, payload = invoke(
+                    root,
+                    "cycle-baseline-photo-complete",
+                    *common,
+                    "--scan-id",
+                    "scan-1",
+                    "--photo-id",
+                    photo_id,
+                    "--liker-count",
+                    "0",
+                )
+                self.assertEqual(result.returncode, 0, payload)
+            result, completed = invoke(root, "cycle-baseline-complete", *common, "--scan-id", "scan-1")
+            self.assertEqual(result.returncode, 0, completed)
+            result, _ = invoke(root, "finish", "--run-id", begun["run_id"], "--status", "completed", "--now", "2026-08-14T09:02:00+00:00")
+            self.assertEqual(result.returncode, 0)
+            seed_approved_likes(root, 0, dt(14, 8), "2026-08-14")
+
+            result, run = invoke(root, "begin", "--mode", "run", "--cycle-id", "c1", "--now", "2026-08-14T09:03:00+00:00")
+
+            self.assertEqual(result.returncode, 0, run)
+            checkpoint = read_checkpoint(root, run["run_id"])
+            binding = [item for item in checkpoint.events if item.kind == "cycle_run_bound"]
+            self.assertEqual(len(binding), 1)
+            self.assertEqual(binding[0].data["baseline_digest"], completed["baseline_digest"])
+
     def test_review_checkpoint_resumes_across_shanghai_midnight(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
