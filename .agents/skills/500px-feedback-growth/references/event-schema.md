@@ -31,6 +31,29 @@
 | `safety_paused` | `reason`, `page_url`, `evidence_summary`, `last_safe_action_id` | — |
 | `run_finished` | `status`, `confirmed_like_count`, `confirmed_comment_count` | — |
 
+### Cycle 与回顾事件
+
+| kind | 必填 data 字段 |
+|---|---|
+| `cycle_started` | `cycle_id`, `attribution_eligible` |
+| `cycle_showcase_observed` | `cycle_id`, `photo_id`, `photo_url`, `owner_id`, `visibility`, `position`, `evidence_summary` |
+| `cycle_showcase_frozen` | `cycle_id`, `photo_ids`, `showcase_digest` |
+| `cycle_baseline_scan_started` | `cycle_id`, `scan_id` |
+| `cycle_baseline_like_observed` | `cycle_id`, `scan_id`, `photo_id`, `photographer_id`, `display_name`, `profile_url` |
+| `cycle_baseline_photo_completed` | `cycle_id`, `scan_id`, `photo_id`, `liker_count` |
+| `cycle_baseline_completed` | `cycle_id`, `scan_id`, `baseline_digest` |
+| `cycle_run_bound` | `cycle_id`, `run_id`, `baseline_digest`, `bound_at` |
+| `cycle_like_completed` | `cycle_id`, `mapped_run_ids`, `touch_action_ids`, `episode_ids`, `like_completed_at`, `terminal_status` |
+| `review_schedule_requested` | `cycle_id`, `review_kind`, `attempt`, `due_at`, `state_root`, `automation_name`, `payload_digest` |
+| `review_scheduled` | `cycle_id`, `review_kind`, `attempt`, `automation_id`, `payload_digest` |
+| `review_started` | `cycle_id`, `review_kind`, `attempt`, `due_at`, `started_at` |
+| `review_photo_observed` | `cycle_id`, `review_kind`, `attempt`, `scan_id`, `photo_id`, `photographer_ids`, `observed_at` |
+| `review_completed` | `cycle_id`, `review_kind`, `attempt`, `scan_id`, `completed_at` |
+| `review_failed` | `cycle_id`, `review_kind`, `attempt`, `reason`, `failed_at` |
+| `review_superseded` | `cycle_id`, `review_kind`, `attempt`, `superseded_at` |
+| `cycle_abandoned` | `cycle_id`, `reason`, `abandoned_at` |
+| `cycle_attribution_scope_mapped` | `cycle_id`, `mapped_run_ids`, `showcase_photo_ids`, `touch_action_ids`, `episode_ids`, `observation_refs`, `attribution_eligible`, `mapping_digest` |
+
 ## ID 与自动生命周期
 
 - 点赞 `action_id = sha256(daily_task_id + photographer_id + photo_id + "outgoing_like_confirmed")`。
@@ -38,6 +61,8 @@
 - CLI 收到新的 `received_like_observed` 后自动关闭符合条件的最近 open episode；不要凭页面猜测手工标记成功。
 - 相同 action ID 会被拒绝；sealed run 与保留 checkpoint 同时存在时，重建只采用 sealed run。
 - Sealed run 不可恢复，也不可继续向 retained checkpoint 追加事件；`resume` 只接受当前 effective state 中的 active run。
+- `transaction_context` 按事务保存：cycle/run 用 `cycle_id`，review 用 `cycle_id + review_kind + attempt`。Review 可跨日恢复；cycle/migration 超过 24 小时需重算事实。
+- List 字段必须是无重复的非空字符串序列。`review_photo_observed.photographer_ids=[]` 与实际 `liker_count=0` 配套表示“已完整扫描且无人点赞”。
 
 ## 安全值
 

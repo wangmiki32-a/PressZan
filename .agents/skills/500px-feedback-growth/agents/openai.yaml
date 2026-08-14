@@ -1,7 +1,7 @@
 interface:
   display_name: "500px Feedback Growth"
   short_description: "用可归因反馈持续优化 500px 摄影师点赞互动与回馈增长"
-  default_prompt: "使用 $500px-feedback-growth 恢复或开始今天的任务，安全执行到当日累计 100 个确认点赞。"
+  default_prompt: "使用 $500px-feedback-growth 冻结当前 5 张公开作品，恢复或开始本轮点赞，并自动安排两次只读回顾。"
 
 policy:
   allow_implicit_invocation: false

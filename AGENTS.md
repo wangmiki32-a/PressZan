@@ -46,6 +46,10 @@
 - 同日新鲜 preview 且之后没有确认互动时，只快速复核已批准候选：按 `source_url` 分组，每个来源页只访问一次。不得重新扫描全部 30 幅作品或点赞者列表。
 - `preview_not_latest`、`preview_changed` 或 `preview_expired` 必须封存为 `approval_rejected`，再生成新 preflight；不得强行匹配旧 digest。
 - 正常运行不按固定数量拆分；有 recoverable run 时继续同一个 run，只有达到 100、安全暂停或候选耗尽才封存。
+- 每轮点赞开始前必须从本人主页冻结恰好 5 张当前公开展示作品并完成逐张 baseline；任一张缺失、非公开、账号不符或读取未完成都禁止点赞。
+- 上一周期未 settled 或 abandoned 时不得开始下一轮点赞；用户手动上传和调整展示不受此限制。
+- 点赞结束后按最后一次确认点赞临时创建 `+20h`、`+70h` 两个一次性只读回顾任务。不得用周期性轮询代替，也不得在回顾任务中产生互动。
+- `+70h` 是最终主动观察，不是 72 小时成熟。只有 episode 自身 expiry 到达后才能派生 failure。
 
 ### 页面操作
 
@@ -64,17 +68,19 @@
 - 每人只检查最近 12 幅作品；全部已点赞或作品不可读时跳过，不消耗成功额度。
 - 历史点赞者只能初始化为 `promising`；滚动 30 天内至少 2 次独立归因回馈才是 `verified`。
 - 同一摄影师 72 小时窗口内的多幅回馈只计一个独立回馈者；报告统一使用“归因回馈”，不声称严格因果。
+- 新周期归因只接受冻结 5 张内、排除 baseline、位于 episode 时间窗的 observation。已映射 cycle 的旧 success 不得直接驱动层级、Beta、KPI、趋势或 Dashboard。
 - 评论只允许符合 skill 规则的 `verified` 摄影师，固定文本为“拍的真棒👍”，并与点赞分开记录。
 
 ## 代码修改规则
 
 - 修改前先搜索现有实现、测试和文档，优先做最小完整改动。
 - 运行逻辑保持 Python 3.9 标准库兼容；新增生产依赖前必须获得用户确认。
-- 保持模块职责：`store.py` 管日志，`analytics.py` 重建状态，`selector.py` 选候选，`dashboard.py` 生成视图，`cli.py` 编排命令。
+- 保持模块职责：`store.py` 管日志，`cycles.py` 重建周期和 scoped evidence，`analytics.py` 聚合状态，`selector.py` 选候选，`automation.py` 生成纯数据调度请求，`dashboard.py` 生成视图，`cli.py` 编排命令。
 - 事件 schema、归因、配额、安全停机或 preview 审批行为变化时，必须先补测试，再同步 `SKILL.md`、对应 reference、架构/运行文档和必要 ADR。
 - 不使用真实点赞或评论做自动化测试；测试必须使用临时状态目录、固定时钟和固定随机种子。
 - 统计聚合必须按事件时间和业务主键确定性排序，不能依赖文件遍历、字典插入或 worktree 当前目录顺序。
 - Dashboard 的日期、cohort、单位、分母和成熟条件必须显式定义；只有 preflight 的日期不能覆盖最近执行，延长过的 episode 在最新 expiry 前不能进入成熟 KPI。
+- Dashboard 有 cycle 时优先显示最新周期和冻结 5 张；只有无 cycle 的旧日志才回退到执行日口径。
 - 图表只服务真实比较：1 个执行日用双柱，2-7 个执行日用分组柱，至少 8 个执行日才用折线。互斥结果不得画成包含式漏斗，身份分层不得混入结果阶段。
 - Dashboard 默认浅色，深色仅由用户手动切换；不得展示无法从事件日志重建的指标。
 

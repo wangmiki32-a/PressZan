@@ -7,7 +7,8 @@
 | 连续 100 次互动的限频风险 | 旧流程以四个 run 完成 100，未遇到安全暂停 | 至少一次按新单 run 合同执行的页面读回、耗时和风险事件 | 完成真实单 run 100，或观察到平台限频阈值并写入安全规则 |
 | 单次 preflight 的候选充足度 | 历史扫描可观察到超过 100 位摄影师，但有效候选受已点赞、页面失效和层级约束影响 | 新流程的 preview 数、运行时跳过数和重新播种次数 | 连续多个自然日稳定完成 100，或形成可验证的候选扩展策略 |
 | 长时间 Chrome 会话稳定性 | 已知弹层、评论区和连接会出现异步空白或重连问题 | 单 run 的连接中断次数、恢复点和重复动作检查 | 同 run 中断恢复被真实验证，且没有重复点赞或状态漂移 |
-| 首个 cohort 的 72 小时成熟结果 | 次日首次观察为 51 个成功、49 个 open；尚未到完整 expiry | 2026-08-16 15:20（Asia/Shanghai）之后的只读 preflight、success/failure 封存和成熟 KPI | 100 个首轮 episode 全部成为 success 或 failure，Dashboard 与日志一致 |
+| 首个 cycle 的 scoped 72 小时成熟结果 | 旧口径曾写 51 个 success，但需按冻结 5 张、baseline 排除后重算 | +70h 只读回顾、2026-08-16 15:20（Asia/Shanghai）之后的成熟重建 | 100 个 episode 都由 eligible evidence 成为 success/failure，Dashboard 与日志一致 |
+| Codex 一次性回顾任务的真实可靠性 | intent、payload digest、幂等 bind 和断点恢复已有单元测试 | 本轮 +70h 任务实际唤醒、5/5 扫描、失败通知和 Dashboard 重建 | 至少一次真实任务按时完成，或形成可复现的 host 侧恢复规则 |
 | 安全暂停后的显式解除语义 | `safety_paused` 能阻止同 checkpoint 的继续写入，但事件 schema 没有独立的 recovery/cleared 事件 | 一次真实安全暂停、人工恢复与同 run/新 run 的完整日志 | 明确并测试暂停解除协议，确保历史暂停不会永久污染当前状态，也不会被静默忽略 |
 | 算法正向反馈是否稳定 | 当前样本只有一个未成熟 cohort，尚不足以评价 Thompson Sampling 或 verified 策略 | 多个成熟执行日、不同候选层级的触达与独立回馈 | 样本足以比较层级、延迟和回馈率，并能据此保留或调整配额 |
 

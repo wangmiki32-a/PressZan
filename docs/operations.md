@@ -40,6 +40,13 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status \
 
 ## 标准日任务
 
+### 周期准备
+
+1. 用户手动完成上传和分享；启动点赞 Skill 时才固定本轮 scope。
+2. 从主页确认本人账号与恰好 5 张公开展示作品，记录顺序并冻结；主页后续变化不改写当前 cycle。
+3. 逐张读取完整点赞者 baseline。零 liker 也必须写 completion；任一张失败则保持 preparing，不进入点赞。
+4. Baseline sealed 后，run 通过 `cycle_id` 绑定；不得把同一 run 映射到多个周期。
+
 ### Preflight
 
 Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论者，生成 preview。不得点赞、评论、关注或私信。
@@ -64,6 +71,14 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 4. 页面确认成功后立即追加事件；失败或不明确时不得重复点击。
 5. 从当前作品评论区选择下一位未访问候选，链路不足时从本地高分队列重新播种。
 6. 同一个 run 持续执行当天剩余额度；达到当日累计 100 后封存，并重建 status 和 Dashboard。
+
+### 自动回顾
+
+1. 点赞结束后，以最后一次确认点赞为基准，创建 `+20h review_1d` 与 `+70h review_3d` 两个一次性任务。
+2. 两次任务只读扫描冻结 5 张，逐张记录完整 liker 列表；5/5 后封存并重建 Dashboard。
+3. +70h 完成不提前判失败；episode 到 72 小时 expiry 后，下一次重建才显示成熟结果。
+4. 任务创建后未绑定日志时，用确定性名称和 payload digest 恢复；禁止盲目再建同名任务。
+5. 当前历史周期已经人工完成约 +19 小时的 1 日回顾，迁移时只创建 +70h 任务。
 
 ## 已验证故障与最短恢复
 
@@ -92,7 +107,7 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 - 九个只读页面在一次重试后仍无法读取点赞者列表，被记录为 `scan_issue`，未阻断其余任务。
 - 两位候选主页作品不可读，被跳过且没有消耗成功额度。
 - 当时尚无 `verified` 摄影师，因此没有发送评论；不能为了增加互动而放宽评论资格。
-- 次日只读扫描首次观察到 51 位归因回馈者，另有 49 个 episode 仍在 72 小时窗口中；这证明回馈观察链可工作，但窗口成熟前不能把 51% 报成最终成熟回馈率。
+- 次日旧口径扫描曾写入 51 个 success；它包含最近 30 张的观察，不能直接代表冻结 5 张 scoped 回馈。迁移后由 baseline、冻结 scope 和原始 observation 重新计算，旧 success 仅保留审计。
 
 这些结果形成的长期规则已经分别进入 `AGENTS.md`、本手册和 skill references；运行 ID、preview ID、摄影师名单和个人互动细节只保留在本地日志。
 
@@ -104,3 +119,4 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 4. 没有 active checkpoint 遗留；若必须中断，已明确保留 recoverable run。
 5. Dashboard 的“最近执行”、互斥 episode 结果和成熟 KPI 符合 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。
 6. 新出现的问题只有在重复出现且解法稳定后，才更新长期文档。
+7. 有 cycle 时检查冻结 5/5、两个回顾槽、baseline 排除和 maturity tail；不得用旧 raw success 替代 eligible evidence。

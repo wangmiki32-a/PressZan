@@ -16,6 +16,9 @@
 | checkpoint 事件落入旧运行 | 临时脚本写死旧 `run_id` | 每次生成脚本后先核对 `run_id`、`scan_id`、`state-root`；每页写入后检查返回 position |
 | `resume` 返回 `run_not_recoverable` | run 已 sealed、ID 过期或不是当前 active run | 回到 `status --json`；只恢复返回的 recoverable run，不向 retained checkpoint 追加 |
 | `begin` 返回 `stale_recoverable_run` | 旧日 active run 跨过 Asia/Shanghai 日界线 | 不 resume、不追加动作；封存旧日为 `paused_incomplete`，再开始新日任务 |
+| Automation 已创建但 `review_scheduled` 未写入 | host create 与日志 bind 之间中断 | 按确定性任务名读取现有任务；payload digest 一致则补 bind，不一致立即停止 |
+| 回顾只完成 1-4 张 | 页面或工具中断 | 保留相同 `(cycle_id, review_kind, attempt)` checkpoint，跨日仍可 resume，只补缺失作品 |
+| `+70h` 已完成但 episode 未到 72 小时 | 观察时间与成熟时间不同 | 保持 open；到 expiry 后通过下一次 status/dashboard 重建派生 failure |
 
 ## 避免重复扫描
 
@@ -36,6 +39,15 @@
 - 浏览器连接丢失但未出现安全警告时保留 active checkpoint；重新连接后先读 `resume` 输出和页面当前状态。
 - 只有确认达到 100、安全暂停或候选耗尽时才封存 run。未知中断不得伪写 `completed`。
 - 跨日 active run 是例外：旧日额度不结转，`resume`/`event` 返回 `daily_task_expired`，需封存旧日未完成状态后再开始新日。
+
+## 临时回顾任务恢复
+
+- 每个点赞周期只创建两个一次性只读任务：`+20h review_1d` 和 `+70h review_3d`；不得创建周期性轮询任务。
+- Automation 只携带 `cycle_id`、`review_kind`、`attempt`、`due_at` 和主工作区绝对 `state_root`，不携带作品、摄影师、Cookie 或页面认证数据。
+- 任务执行前先匹配 schedule intent 的 payload digest；同名同 payload 是幂等恢复，同名不同 payload 是冲突，禁止覆盖。
+- Review checkpoint 可以跨 Asia/Shanghai 日界线恢复，但只能恢复完全相同的 cycle/kind/attempt。每张冻结作品的完整 liker 列表写入一次，5/5 后才完成。
+- 回顾失败要写 `review_failed` 并通知用户；不得把未扫描作品当作零点赞。用户明确授权 retry 后使用 `attempt+1` 新建一次性任务。
+- 当前历史迁移已经人工完成 1 日回顾时，只补建一次 +70h 任务；1 日 slot 只做事件映射，不创建 Automation。
 
 ## 页面与日志不变量
 

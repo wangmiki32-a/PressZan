@@ -13,6 +13,13 @@
 3. 从历史高频或近期点赞者形成 promising 起始队列；否则从最新且有评论的自有作品开始读取候选。
 4. 在作品评论区记录可见候选及页面顺序。不得在 preflight 中点击点赞、提交评论、关注或私信。
 
+## 周期开始：冻结 5 张与 baseline
+
+1. 上传和分享由用户手动完成。点赞 Skill 启动后，从本人主页当前公开展示栏按顺序读取恰好 5 张作品；确认账号 ID、公开可见、稳定 `photo_id` 和 canonical URL。
+2. 通过 cycle checkpoint 立即记录 5 个 `cycle_showcase_observed`，再写 `cycle_showcase_frozen`。主页后续变化不得改写本周期冻结列表。
+3. 逐张打开这 5 张作品的点赞者列表，完整记录 baseline。每张都要写独立 completion；零点赞也必须明确写 `liker_count=0`，不能用“没有 observation”代替完成证据。
+4. 任一作品读取失败时只刷新一次；仍失败则保持 cycle 为 preparing，禁止开始点赞。只有 baseline 5/5 sealed 后，才允许 `begin --mode run --cycle-id`。
+
 ## Run：候选链
 
 ### 批准快速复核
@@ -34,9 +41,11 @@
 
 ## 回馈更新
 
-1. 每次 preflight 扫描个人最近 30 幅作品的点赞来源；run 使用同日且未发生后续确认互动的 fresh preview。条件不满足时先生成新 preflight，不在 approval run 内重复 30 幅扫描。
-2. 仅当新 liker pair 的首次观察时间晚于该摄影师最近一次触达，且不超过其 72 小时 episode expiry，才记 `feedback_episode_succeeded`。
-3. 同一摄影师在同一窗口点赞多幅作品只记一个独立回馈者；额外作品只增加该 episode 的收到点赞数。报告统一称“归因回馈”。
+1. 候选 preflight 仍可扫描最近 30 幅作品；周期回顾只扫描点赞开始时冻结的 5 张，两种 scope 不得混用。
+2. 点赞结束后临时创建 `+20h` 与 `+70h` 两个只读任务。每次回顾逐张写入完整 photographer ID 列表；没有 liker 时写空列表和 `liker_count=0`。
+3. baseline 中已有 pair 不算新回馈。仅当冻结 5 张内的新 pair 首次观察晚于该摄影师最近触达，且不超过 72 小时 episode expiry，才进入 scoped success。
+4. 同一摄影师在同一窗口点赞多幅作品只记一个独立回馈者；额外作品增加回赞深度，但首版不用于选择奖励。报告统一称“归因回馈”。
+5. `+70h` 只负责最后观察；不得在 episode 的 `expires_at` 前判 failure。回顾完成后只重建 Dashboard，不进行任何站外互动。
 
 ## 重试与硬停止
 

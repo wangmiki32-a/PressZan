@@ -90,10 +90,44 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn('display_name: "500px Feedback Growth"', text)
         self.assertIn('short_description: "用可归因反馈持续优化 500px 摄影师点赞互动与回馈增长"', text)
         self.assertIn(
-            'default_prompt: "使用 $500px-feedback-growth 恢复或开始今天的任务，安全执行到当日累计 100 个确认点赞。"',
+            'default_prompt: "使用 $500px-feedback-growth 冻结当前 5 张公开作品，恢复或开始本轮点赞，并自动安排两次只读回顾。"',
             text,
         )
         self.assertIn("allow_implicit_invocation: false", text)
+
+    def test_cycle_contract_freezes_five_and_schedules_two_read_only_reviews(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        browser = (ROOT / "references" / "browser-workflow.md").read_text(encoding="utf-8")
+        dashboard = (ROOT / "references" / "dashboard-semantics.md").read_text(encoding="utf-8")
+        recovery = (ROOT / "references" / "operational-recovery.md").read_text(encoding="utf-8")
+
+        for text in (skill, browser):
+            self.assertIn("冻结 5 张", text)
+            self.assertIn("baseline", text)
+        for text in (skill, dashboard, recovery):
+            self.assertIn("+20h", text)
+            self.assertIn("+70h", text)
+            self.assertIn("只读", text)
+        self.assertIn("上传和分享由用户手动完成", skill)
+        self.assertIn("+70h 不等于 72 小时成熟", dashboard)
+        self.assertIn("不得创建周期性轮询任务", recovery)
+
+    def test_event_schema_documents_cycle_events(self):
+        text = (ROOT / "references" / "event-schema.md").read_text(encoding="utf-8")
+        for event_name in (
+            "cycle_started",
+            "cycle_showcase_frozen",
+            "cycle_baseline_completed",
+            "cycle_run_bound",
+            "cycle_like_completed",
+            "review_schedule_requested",
+            "review_scheduled",
+            "review_started",
+            "review_photo_observed",
+            "review_completed",
+            "cycle_attribution_scope_mapped",
+        ):
+            self.assertIn(f"`{event_name}`", text)
 
 
 if __name__ == "__main__":

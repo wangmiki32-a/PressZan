@@ -15,7 +15,7 @@ description: Use when a user asks to run, resume, preview, inspect, or visualize
 
 | 用户输入 | 行为 |
 |---|---|
-| `$500px-feedback-growth` | 恢复或开始今天的任务，连续执行到当日累计 100 个确认点赞 |
+| `$500px-feedback-growth` | 冻结本轮公开作品、恢复或开始点赞，并在完成后创建两次只读回顾任务 |
 | `确认执行` | 批准最新有效预览并继续同一日任务 |
 | `status` | 只读显示进度、暂停和摄影师分层 |
 | `preflight` | 只读刷新回馈并生成候选预览 |
@@ -32,10 +32,23 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command
 
 ## 默认启动
 
-1. 先执行 `status --json`。今日已完成 100 时只报告结果；未完成额度不跨 Asia/Shanghai 日界线结转。
+上传和分享由用户手动完成。Skill 从点赞周期开始负责“冻结公开作品 → baseline → 点赞 → +20h 回顾 → +70h 回顾 → Dashboard”。
+
+1. 先执行 `status --json` 和 `cycle-status`。上一周期尚未结算时，不开始新一轮点赞；用户仍可手动上传和调整展示。
 2. 若返回同日 recoverable run，执行 `resume --run-id <run_id>`，继续同一个 run；不得新建运行或重复动作。若返回 `stale_recoverable_run`，不得跨日追加动作，先封存旧日为 `paused_incomplete`，再开始新日任务。
-3. 若首次尚未批准，内部 `begin --mode run` 会返回 `preflight_required`。此时执行只读 preflight，展示候选数、层级、配额和风险摘要，只询问“确认执行？”。
-4. 若已批准且没有活动 run，执行 `begin --mode run`，持续完成当天剩余额度，直到当日累计 100。
+3. 新周期先 `begin --mode cycle --cycle-id <cycle_id>`：按主页当前顺序确认并冻结 5 张公开本人作品，逐张完整读取当前点赞者作为 baseline；不是 5 张、账号不符、非公开或任一张未完成读取时禁止点赞。
+4. 若首次尚未批准，执行只读 preflight，展示候选数、层级、配额和风险摘要，只询问“确认执行？”。
+5. 已批准且 baseline 已 sealed 时，使用 `begin --mode run --cycle-id <cycle_id>` 绑定周期并连续执行到当日累计 100。
+
+## 周期回顾自动化
+
+1. 点赞运行以最后一次 `outgoing_like_confirmed` 为时间基准。正常完成或候选耗尽且至少成功点赞 1 次后，原子记录 `cycle_like_completed` 和两个调度 intent。
+2. 为本周期临时创建两个一次性任务：`+20h` 的 `review_1d` 与 `+70h` 的 `review_3d`。不得创建周期性轮询任务。
+3. 两次任务都只读：只扫描本周期冻结 5 张作品，完整记录每张作品当前点赞者；不得点赞、评论、关注、私信或修改展示。
+4. baseline 中已经存在的 `(photo_id, photographer_id)` 不算新回馈。冻结范围内、首次观察晚于触达且不超过 episode expiry 的新 pair 才进入 scoped attribution。
+5. `+70h` 是最后一次主动观察，不等于 72 小时成熟。到达每个 episode 的 `expires_at` 后，下一次状态或 Dashboard 重建才把仍无回馈者派生为 failure。
+6. 每次回顾完成后立即封存 review checkpoint 并重建 Dashboard；失败时记录原因、保留断点并通知用户，不把缺失作品当作零点赞。
+7. 历史迁移周期若人工 `+20h` 回顾已完成，只补建一次 `+70h` 任务；不得重建或重跑 1 日任务。
 
 ## 只读 Preflight
 
@@ -65,8 +78,8 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command
 
 ## Dashboard 回顾
 
-1. 回顾基线是最近一个产生确认点赞的执行日；只有 preflight 的日期不能覆盖它。
-2. 下一次执行一旦产生确认点赞，自动成为新的回顾 cohort。
+1. 有 cycle 时优先显示最新周期：冻结 5 张、baseline、新增 liker、两次回顾状态和成熟尾差；无 cycle 的旧日志才退回最近执行日口径。
+2. 新周期点赞一旦产生确认动作，成为新的回顾 cohort；只有 preflight 的日期不能覆盖它。
 3. `归因回馈 / 观察窗口中 / 窗口成熟未回馈` 是互斥 episode 结果；不得把 `Verified` 身份混入结果漏斗。
 4. 只有至少 8 个执行日才画折线；1 个执行日使用双柱对比，2-7 个执行日使用分组柱状图。
 5. 默认浅色主题；手动切换深色。Dashboard 只展示日志可重建的指标，不展示未落入事件模型的“层级变化”。

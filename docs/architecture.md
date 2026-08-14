@@ -13,7 +13,8 @@ flowchart LR
     B["已登录 Chrome\n可见页面状态"] --> W["Skill 浏览器工作流"]
     W --> C["Append-only checkpoint"]
     C --> L["Sealed Markdown run log"]
-    L --> R["状态重建 analytics"]
+    L --> Y["周期重建 cycles"]
+    Y --> R["状态聚合 analytics"]
     R --> S["候选选择 selector"]
     R --> D["Dashboard 派生视图"]
     S --> P["Preview + digest"]
@@ -28,8 +29,10 @@ flowchart LR
 ### 状态与算法层
 
 - `store.py`：校验并读写 Markdown checkpoint 和 sealed log。
-- `analytics.py`：按事件顺序重建摄影师、episode、每日任务和归因状态。
+- `cycles.py`：从 cycle/review/migration 事件重建冻结 scope、两次回顾槽和 scoped episode evidence。
+- `analytics.py`：按事件顺序重建摄影师、episode、每日任务，并只把 eligible evidence 交给分层、KPI 和选择算法。
 - `selector.py`：在每日配额、覆盖率和单人上限内执行可复现选择。
+- `automation.py`：生成确定性一次性任务名称、payload 和 digest；不直接调用 Codex 宿主 API。
 - `cli.py`：编排 run 生命周期、preview 审批、事件追加和错误码。
 
 ### 展示层
@@ -53,6 +56,13 @@ Dashboard 的回顾基线是最近一个产生确认点赞的执行日，而不�
 
 ## 运行生命周期
 
+### Cycle prepare
+
+1. 用户手动完成上传和分享。
+2. 点赞 Skill 从主页冻结恰好 5 张公开本人作品；主页后续变化不改写本周期 scope。
+3. 逐张完整扫描点赞者形成 baseline，5/5 sealed 后周期进入 `baseline_ready`。
+4. 上一周期未结算时阻止新点赞周期。
+
 ### Preflight
 
 1. 扫描当时最新 30 幅本人作品。
@@ -68,10 +78,18 @@ Dashboard 的回顾基线是最近一个产生确认点赞的执行日，而不�
 
 ### Run
 
-1. 一个 run 连续执行当天剩余额度，当日累计不超过 100。
+1. run 必须绑定一个 `baseline_ready` cycle；一个 run 连续执行当天剩余额度，当日累计不超过 100。
 2. 每个成功动作立即写入 checkpoint，并自动打开或延长 72 小时 feedback episode。
 3. 达到 100、安全停机或候选耗尽后封存 run；普通中断恢复同一 run。
-4. 重建 status 和 Dashboard。
+4. 最后一次确认点赞确定周期时间零点；同一 cycle 事务原子生成 +20h 和 +70h 两个 schedule intent。
+
+### Review 与成熟
+
+1. Codex 宿主为每个 intent 创建一次性 Automation；任务只保存 cycle/context 和绝对 state root。
+2. `review_1d`、`review_3d` 独立执行，只读扫描冻结 5 张并逐图追加完整 liker 列表。
+3. baseline 已有 pair、冻结范围外 observation、abandoned 或不可归因周期不进入算法证据。
+4. +70h 完成后 episode 仍可能 open；到各自 `expires_at` 后，读时派生 failure，不写第二套结算状态。
+5. 每次回顾后从日志重建 status 和 Dashboard。
 
 ## 算法合同
 
@@ -85,6 +103,7 @@ Dashboard 的回顾基线是最近一个产生确认点赞的执行日，而不�
 - 证据采用 30 天半衰期；Thompson Sampling 必须支持固定 seed，时间逻辑必须支持注入时钟。
 - 成熟 KPI 只接纳 `expires_at <= now` 的完整 episode；延长窗口不能因第一触达已满 72 小时而提前进入分母。
 - 同日多个 run 的状态按 `ended_at`、`run_id` 确定性取最新，不依赖日志文件遍历顺序。
+- 回赞深度只做观察展示；首版 selector 奖励独立回馈者，不额外奖励同一人多赞。
 
 当前运行合同见 [单次 100 Consolidation 设计](superpowers/specs/2026-08-13-single-run-100-consolidation-design.md)；详细数学定义保留在已标记为历史的 [原始设计 spec](superpowers/specs/2026-08-12-500px-feedback-growth-design.md)。
 
