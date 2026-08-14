@@ -1,9 +1,12 @@
+from datetime import timedelta
+import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from tests import bootstrap  # noqa: F401
 from feedback_growth.model import CheckpointHeader, RunLog
+from feedback_growth.analytics import rebuild_state
 from feedback_growth.store import (
     LogValidationError,
     begin_checkpoint,
@@ -11,7 +14,98 @@ from feedback_growth.store import (
     read_checkpoint,
     render_run_log,
 )
-from tests.helpers import confirmed_like, dt, event, run
+from tests.helpers import confirmed_like, dt, event, opened, run
+
+
+def episode_id(photographer_id, action_id):
+    return hashlib.sha256(f"episode:{photographer_id}:{action_id}".encode()).hexdigest()
+
+
+def cycle_run(*, with_feedback=False):
+    touch = dt(12, 8)
+    episode = episode_id("p1", "a1")
+    review_time = touch + timedelta(hours=20)
+    final_time = touch + timedelta(hours=70)
+    events = [
+        event("cycle_started", touch - timedelta(hours=1), cycle_id="c1", attribution_eligible=True),
+        event(
+            "cycle_showcase_frozen",
+            touch - timedelta(minutes=50),
+            cycle_id="c1",
+            photo_ids=[f"mine-{index}" for index in range(1, 6)],
+            showcase_digest="showcase",
+        ),
+        event(
+            "cycle_baseline_completed",
+            touch - timedelta(minutes=40),
+            cycle_id="c1",
+            scan_id="baseline",
+            baseline_digest="baseline",
+        ),
+        confirmed_like("a1", "p1", touch),
+        opened(episode, "p1", "a1", touch, touch + timedelta(hours=72)),
+        event(
+            "cycle_like_completed",
+            touch + timedelta(minutes=1),
+            cycle_id="c1",
+            mapped_run_ids=["run-1"],
+            touch_action_ids=["a1"],
+            episode_ids=[episode],
+            like_completed_at=touch.isoformat(),
+            terminal_status="completed",
+        ),
+    ]
+    for kind, due in (("review_1d", review_time), ("review_3d", final_time)):
+        events.append(
+            event(
+                "review_schedule_requested",
+                touch + timedelta(minutes=2),
+                cycle_id="c1",
+                review_kind=kind,
+                attempt=1,
+                due_at=due.isoformat(),
+                state_root="/state",
+                automation_name=f"500px-review-c1-{kind}-1",
+                payload_digest=kind,
+            )
+        )
+    if with_feedback:
+        events.append(
+            event(
+                "review_photo_observed",
+                review_time,
+                cycle_id="c1",
+                review_kind="review_1d",
+                attempt=1,
+                scan_id="review-1",
+                photo_id="mine-1",
+                photographer_ids=["p1"],
+                observed_at=review_time.isoformat(),
+            )
+        )
+    events.extend(
+        [
+            event(
+                "review_started",
+                final_time,
+                cycle_id="c1",
+                review_kind="review_3d",
+                attempt=1,
+                due_at=final_time.isoformat(),
+                started_at=final_time.isoformat(),
+            ),
+            event(
+                "review_completed",
+                final_time,
+                cycle_id="c1",
+                review_kind="review_3d",
+                attempt=1,
+                scan_id="review-3",
+                completed_at=final_time.isoformat(),
+            ),
+        ]
+    )
+    return run(events), touch, episode
 
 
 class CycleSchemaTest(unittest.TestCase):
@@ -114,6 +208,33 @@ class CycleSchemaTest(unittest.TestCase):
 
             with self.assertRaisesRegex(LogValidationError, "multiple active checkpoints"):
                 load_effective_runs(root)
+
+    def test_final_review_does_not_mature_before_expiry(self):
+        log, touch, episode = cycle_run()
+
+        state = rebuild_state([log], touch + timedelta(hours=71, minutes=59))
+
+        evidence = state.photographers["p1"].eligible_episodes[0]
+        self.assertEqual(evidence.episode_id, episode)
+        self.assertEqual(evidence.outcome, "open")
+        self.assertEqual(state.cycles["c1"].status, "reviews_scheduled")
+
+    def test_final_review_derives_failure_at_expiry(self):
+        log, touch, _ = cycle_run()
+
+        state = rebuild_state([log], touch + timedelta(hours=72))
+
+        self.assertEqual(state.photographers["p1"].eligible_episodes[0].outcome, "failure")
+        self.assertEqual(state.cycles["c1"].status, "settled")
+
+    def test_scoped_feedback_becomes_success(self):
+        log, touch, _ = cycle_run(with_feedback=True)
+
+        state = rebuild_state([log], touch + timedelta(hours=72))
+
+        evidence = state.photographers["p1"].eligible_episodes[0]
+        self.assertEqual(evidence.outcome, "success")
+        self.assertEqual(evidence.received_like_count, 1)
 
 
 if __name__ == "__main__":

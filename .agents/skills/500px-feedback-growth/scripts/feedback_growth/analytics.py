@@ -5,6 +5,7 @@ import hashlib
 from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
+from .cycles import eligible_episode_evidence, latest_cycle_id, rebuild_cycles
 from .model import (
     AggregateState,
     DailyTaskStats,
@@ -73,6 +74,7 @@ def _immutable_episode(episode: _Episode) -> FeedbackEpisode:
 
 
 def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
+    logs = tuple(logs)
     ordered = []
     run_status: Dict[str, Tuple[datetime, str, str]] = {}
     run_ended = {}
@@ -225,20 +227,22 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
         raise StateValidationError(f"touch without episode lifecycle: {sorted(unlinked)[0]}")
 
     immutable_episodes = {key: _immutable_episode(value) for key, value in episodes.items()}
+    cycles = rebuild_cycles(logs, immutable_episodes, now)
     photographer_ids = set(profile_names) | set(photographer_episodes) | set(baseline_positions)
     photographers = {}
     today_key = now.astimezone(SHANGHAI).date().isoformat()
     for photographer_id in photographer_ids:
         episode_values = tuple(immutable_episodes[key] for key in photographer_episodes.get(photographer_id, []))
+        eligible_values = eligible_episode_evidence(cycles, immutable_episodes, photographer_id, now)
         positions = dict(baseline_positions.get(photographer_id, {}))
         high_potential = len(positions) >= 2 or any(position <= 5 for position in positions.values())
         success_count = sum(
             episode.outcome == "success"
             and episode.feedback_first_seen_at is not None
             and now - ROLLING <= episode.feedback_first_seen_at <= now
-            for episode in episode_values
+            for episode in eligible_values
         )
-        failed = tuple(episode for episode in episode_values if episode.outcome == "failure")
+        failed = tuple(episode for episode in eligible_values if episode.outcome == "failure")
         last_failure = max((episode.expires_at for episode in failed), default=None)
         today_photos = tuple(
             str(item.data["photo_id"])
@@ -253,6 +257,7 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
             baseline_work_positions=positions,
             historical_high_potential=high_potential,
             episodes=episode_values,
+            eligible_episodes=eligible_values,
             last_comment_at=last_comment.get(photographer_id),
             today_like_photo_ids=today_photos,
             success_count_30d=success_count,
@@ -314,6 +319,8 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
         paused_reason=paused_reason,
         episodes=immutable_episodes,
         outgoing_touches=tuple(outgoing_touches),
+        cycles=cycles,
+        latest_cycle_id=latest_cycle_id(cycles),
     )
 
 
@@ -322,9 +329,9 @@ def classify_photographer(stats: PhotographerStats, now: datetime) -> str:
         episode.outcome == "success"
         and episode.feedback_first_seen_at is not None
         and now - ROLLING <= episode.feedback_first_seen_at <= now
-        for episode in stats.episodes
+        for episode in stats.eligible_episodes
     )
-    failures = sum(episode.outcome == "failure" for episode in stats.episodes)
+    failures = sum(episode.outcome == "failure" for episode in stats.eligible_episodes)
     if recent_successes >= 2:
         return "verified"
     if recent_successes == 1 or stats.historical_high_potential:
@@ -337,7 +344,7 @@ def classify_photographer(stats: PhotographerStats, now: datetime) -> str:
 def beta_parameters(stats: PhotographerStats, now: datetime) -> Tuple[float, float]:
     successes = 0.0
     failures = 0.0
-    for episode in stats.episodes:
+    for episode in stats.eligible_episodes:
         age_days = max(0.0, (now - episode.expires_at).total_seconds() / 86400.0)
         if episode.outcome == "success":
             successes += evidence_weight(age_days)
@@ -350,15 +357,22 @@ def beta_parameters(stats: PhotographerStats, now: datetime) -> Tuple[float, flo
 
 def matured_cohort_counts(state: AggregateState, now: datetime) -> Tuple[int, int]:
     start = now - ROLLING
+    evidence_by_episode = {
+        episode.episode_id: episode
+        for stats in state.photographers.values()
+        for episode in stats.eligible_episodes
+    }
     touches = [
         touch
         for touch in state.outgoing_touches
-        if start <= touch.occurred_at <= now and state.episodes[touch.episode_id].expires_at <= now
+        if start <= touch.occurred_at <= now
+        and touch.episode_id in evidence_by_episode
+        and evidence_by_episode[touch.episode_id].expires_at <= now
     ]
     successful = {
         touch.photographer_id
         for touch in touches
-        if state.episodes[touch.episode_id].outcome == "success"
+        if evidence_by_episode[touch.episode_id].outcome == "success"
     }
     return len(successful), len(touches)
 
