@@ -105,6 +105,73 @@ def seed_approved_likes(root, count, base_time, daily_task_id, *, offset=0, run_
 
 
 class CliTest(unittest.TestCase):
+    def test_review_checkpoint_resumes_across_shanghai_midnight(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            result, begun = invoke(
+                root,
+                "begin",
+                "--mode",
+                "review",
+                "--cycle-id",
+                "c1",
+                "--review-kind",
+                "review_3d",
+                "--attempt",
+                "1",
+                "--now",
+                "2026-08-14T15:50:00+00:00",
+            )
+            self.assertEqual(result.returncode, 0, begun)
+
+            result, resumed = invoke(
+                root,
+                "resume",
+                "--run-id",
+                begun["run_id"],
+                "--now",
+                "2026-08-14T16:10:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, resumed)
+            self.assertEqual(resumed["header"]["transaction_context"]["cycle_id"], "c1")
+
+    def test_daily_run_and_review_checkpoint_can_begin_together(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 0, dt(14, 8), "2026-08-14")
+            result, run_begun = invoke(
+                root, "begin", "--mode", "run", "--now", "2026-08-14T09:00:00+00:00"
+            )
+            self.assertEqual(result.returncode, 0, run_begun)
+
+            result, review_begun = invoke(
+                root,
+                "begin",
+                "--mode",
+                "review",
+                "--cycle-id",
+                "c1",
+                "--review-kind",
+                "review_3d",
+                "--attempt",
+                "1",
+                "--now",
+                "2026-08-14T09:01:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, review_begun)
+            self.assertNotEqual(review_begun["run_id"], run_begun["run_id"])
+
+    def test_cycle_begin_requires_cycle_id(self):
+        with TemporaryDirectory() as directory:
+            result, payload = invoke(
+                Path(directory), "begin", "--mode", "cycle", "--now", "2026-08-14T09:00:00+00:00"
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "cycle_id_required")
+
     def test_preview_plans_full_daily_target(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

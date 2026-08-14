@@ -245,6 +245,7 @@ class DashboardTest(unittest.TestCase):
             baseline_work_positions={},
             historical_high_potential=True,
             episodes=(first, second),
+            eligible_episodes=(),
             last_comment_at=None,
             today_like_photo_ids=(),
             success_count_30d=2,

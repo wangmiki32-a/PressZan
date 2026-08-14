@@ -21,6 +21,7 @@ def photographer(candidate, historical=False):
         baseline_work_positions={},
         historical_high_potential=historical,
         episodes=(),
+        eligible_episodes=(),
         last_comment_at=None,
         today_like_photo_ids=(),
         success_count_30d=2 if candidate.tier == "verified" else 0,

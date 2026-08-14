@@ -18,6 +18,7 @@ from .store import (
     LogValidationError,
     append_checkpoint_events,
     begin_checkpoint,
+    iter_recoverable_checkpoints,
     iter_sealed_logs,
     load_effective_runs,
     read_checkpoint,
@@ -164,15 +165,70 @@ def _append_expired_episodes(root: Path, run_id: str, now: datetime, state) -> N
         append_checkpoint_events(root, run_id, failures)
 
 
+def _transaction_context(args) -> Dict[str, str]:
+    cycle_id = getattr(args, "cycle_id", None)
+    if args.mode in {"cycle", "migration"}:
+        if not cycle_id:
+            raise CliError("cycle_id_required")
+        return {"cycle_id": cycle_id}
+    if args.mode == "review":
+        if not cycle_id:
+            raise CliError("cycle_id_required")
+        if not args.review_kind:
+            raise CliError("review_kind_required")
+        if args.attempt is None or args.attempt < 1:
+            raise CliError("invalid_attempt")
+        return {
+            "cycle_id": cycle_id,
+            "review_kind": args.review_kind,
+            "attempt": str(args.attempt),
+        }
+    if args.mode == "run" and cycle_id:
+        return {"cycle_id": cycle_id}
+    return {}
+
+
+def _checkpoint_key(header: CheckpointHeader) -> Tuple[str, ...]:
+    context = header.transaction_context
+    if header.mode in {"run", "preflight"}:
+        return ("daily", header.daily_task_id)
+    if header.mode == "review":
+        return (
+            "review",
+            context.get("cycle_id", ""),
+            context.get("review_kind", ""),
+            context.get("attempt", ""),
+        )
+    return (header.mode, context.get("cycle_id", header.run_id))
+
+
 def command_begin(args) -> int:
     root = _state_root(args.state_root)
     now = _now(args.now)
+    context = _transaction_context(args)
     effective = load_effective_runs(root)
-    active = [log for log in effective if log.status == "active"]
-    if active:
-        recoverable = active[-1]
-        code = "recoverable_run" if recoverable.daily_task_id == _day(now) else "stale_recoverable_run"
-        return _error(code, recoverable_run_id=recoverable.run_id)
+    active_ids = {log.run_id for log in effective if log.status == "active"}
+    requested_header = CheckpointHeader(
+        SCHEMA_VERSION,
+        "requested",
+        _day(now),
+        args.mode,
+        now,
+        args.approve_preview,
+        context,
+    )
+    requested_key = _checkpoint_key(requested_header)
+    for checkpoint in iter_recoverable_checkpoints(root):
+        if checkpoint.header.run_id not in active_ids:
+            continue
+        if args.mode in {"run", "preflight"}:
+            if checkpoint.header.mode not in {"run", "preflight"}:
+                continue
+        elif _checkpoint_key(checkpoint.header) != requested_key:
+            continue
+        same_day = checkpoint.header.daily_task_id == _day(now)
+        code = "recoverable_run" if same_day or args.mode == "review" else "stale_recoverable_run"
+        return _error(code, recoverable_run_id=checkpoint.header.run_id)
     if args.mode == "run" and not args.approve_preview and not _events_have_approval(effective):
         return _error("preflight_required")
     state = rebuild_state(effective, now)
@@ -181,8 +237,20 @@ def command_begin(args) -> int:
         return _error("daily_complete")
     run_id = f"{args.mode}-{uuid.uuid4().hex}"
     daily_task_id = _day(now)
-    begin_checkpoint(root, CheckpointHeader(SCHEMA_VERSION, run_id, daily_task_id, args.mode, now, args.approve_preview))
-    _append_expired_episodes(root, run_id, now, state)
+    begin_checkpoint(
+        root,
+        CheckpointHeader(
+            SCHEMA_VERSION,
+            run_id,
+            daily_task_id,
+            args.mode,
+            now,
+            args.approve_preview,
+            context,
+        ),
+    )
+    if args.mode in {"run", "preflight"}:
+        _append_expired_episodes(root, run_id, now, state)
     remaining = DAILY_TARGET - (daily.confirmed_likes if daily else 0)
     _json(
         {
@@ -192,6 +260,7 @@ def command_begin(args) -> int:
             "remaining_daily_quota": remaining,
             "onboarding_approved": _events_have_approval(effective),
             "recoverable_run_id": None,
+            "transaction_context": context,
         }
     )
     return 0
@@ -208,8 +277,10 @@ def command_resume(args) -> int:
     if args.run_id not in recoverable:
         return _error("run_not_recoverable")
     checkpoint = read_checkpoint(root, args.run_id)
-    if checkpoint.header.daily_task_id != _day(now):
+    if checkpoint.header.mode in {"run", "preflight"} and checkpoint.header.daily_task_id != _day(now):
         return _error("daily_task_expired", daily_task_id=checkpoint.header.daily_task_id)
+    if checkpoint.header.mode in {"cycle", "migration"} and now - checkpoint.header.started_at > timedelta(hours=24):
+        return _error("transaction_expired", run_id=args.run_id)
     _json(
         {
             "ok": True,
@@ -219,6 +290,7 @@ def command_resume(args) -> int:
                 "mode": checkpoint.header.mode,
                 "started_at": checkpoint.header.started_at.isoformat(),
                 "approve_preview_id": checkpoint.header.approve_preview_id,
+                "transaction_context": dict(checkpoint.header.transaction_context),
             },
             "events": [_serialize_event(item) for item in checkpoint.events],
         }
@@ -230,7 +302,7 @@ def command_event(args) -> int:
     root = _state_root(args.state_root)
     now = _now(args.now)
     checkpoint = read_checkpoint(root, args.run_id)
-    if checkpoint.header.daily_task_id != _day(now):
+    if checkpoint.header.mode in {"run", "preflight"} and checkpoint.header.daily_task_id != _day(now):
         return _error("daily_task_expired", daily_task_id=checkpoint.header.daily_task_id)
     if any(item.kind == "safety_paused" for item in checkpoint.events) and args.kind.startswith("outgoing_"):
         return _error("run_paused")
@@ -500,8 +572,11 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     begin = commands.add_parser("begin")
-    begin.add_argument("--mode", choices=("preflight", "run"), required=True)
+    begin.add_argument("--mode", choices=("preflight", "run", "cycle", "review", "migration"), required=True)
     begin.add_argument("--approve-preview")
+    begin.add_argument("--cycle-id")
+    begin.add_argument("--review-kind", choices=("review_1d", "review_3d"))
+    begin.add_argument("--attempt", type=int)
     _add_common(begin)
 
     resume = commands.add_parser("resume")

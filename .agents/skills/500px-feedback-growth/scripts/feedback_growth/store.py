@@ -47,6 +47,67 @@ _EVENT_FIELDS = {
     "candidate_skipped": ({"photographer_id", "reason"}, {"photo_id"}),
     "safety_paused": ({"reason", "page_url", "evidence_summary", "last_safe_action_id"}, set()),
     "run_finished": ({"status", "confirmed_like_count", "confirmed_comment_count"}, set()),
+    "cycle_started": ({"cycle_id", "attribution_eligible"}, set()),
+    "cycle_showcase_observed": (
+        {"cycle_id", "photo_id", "photo_url", "owner_id", "visibility", "position", "evidence_summary"},
+        set(),
+    ),
+    "cycle_showcase_frozen": ({"cycle_id", "photo_ids", "showcase_digest"}, set()),
+    "cycle_baseline_scan_started": ({"cycle_id", "scan_id"}, set()),
+    "cycle_baseline_like_observed": (
+        {"cycle_id", "scan_id", "photo_id", "photographer_id", "display_name", "profile_url"},
+        set(),
+    ),
+    "cycle_baseline_photo_completed": ({"cycle_id", "scan_id", "photo_id", "liker_count"}, set()),
+    "cycle_baseline_completed": ({"cycle_id", "scan_id", "baseline_digest"}, set()),
+    "cycle_run_bound": ({"cycle_id", "run_id", "baseline_digest", "bound_at"}, set()),
+    "cycle_like_completed": (
+        {"cycle_id", "mapped_run_ids", "touch_action_ids", "episode_ids", "like_completed_at", "terminal_status"},
+        set(),
+    ),
+    "review_schedule_requested": (
+        {"cycle_id", "review_kind", "attempt", "due_at", "state_root", "automation_name", "payload_digest"},
+        set(),
+    ),
+    "review_scheduled": (
+        {"cycle_id", "review_kind", "attempt", "automation_id", "payload_digest"},
+        set(),
+    ),
+    "review_started": ({"cycle_id", "review_kind", "attempt", "due_at", "started_at"}, set()),
+    "review_photo_observed": (
+        {"cycle_id", "review_kind", "attempt", "scan_id", "photo_id", "photographer_ids", "observed_at"},
+        set(),
+    ),
+    "review_completed": (
+        {"cycle_id", "review_kind", "attempt", "scan_id", "completed_at"},
+        set(),
+    ),
+    "review_failed": ({"cycle_id", "review_kind", "attempt", "reason", "failed_at"}, set()),
+    "review_superseded": ({"cycle_id", "review_kind", "attempt", "superseded_at"}, set()),
+    "cycle_abandoned": ({"cycle_id", "reason", "abandoned_at"}, set()),
+    "cycle_attribution_scope_mapped": (
+        {
+            "cycle_id",
+            "mapped_run_ids",
+            "showcase_photo_ids",
+            "touch_action_ids",
+            "episode_ids",
+            "observation_refs",
+            "attribution_eligible",
+            "mapping_digest",
+        },
+        set(),
+    ),
+}
+
+_UNIQUE_STRING_LIST_FIELDS = {
+    "photo_ids",
+    "mapped_run_ids",
+    "touch_action_ids",
+    "episode_ids",
+    "photographer_ids",
+    "showcase_photo_ids",
+    "observation_refs",
 }
 
 _JSON_FENCE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
@@ -81,6 +142,14 @@ def _validate_event(event: Event, source: Path) -> None:
         raise LogValidationError(f"missing {sorted(missing)[0]} in {source}")
     if extra:
         raise LogValidationError(f"unexpected {sorted(extra)[0]} in {source}")
+    for field in _UNIQUE_STRING_LIST_FIELDS & keys:
+        value = event.data[field]
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+            raise LogValidationError(f"{field} must be a string list in {source}")
+        if len(value) != len(set(value)):
+            raise LogValidationError(f"{field} must contain unique values in {source}")
+    if event.kind == "cycle_showcase_observed" and event.data["visibility"] != "public":
+        raise LogValidationError(f"visibility must be public in {source}")
     _iso(event.occurred_at)
 
 
@@ -186,6 +255,7 @@ def _header_dict(header: CheckpointHeader) -> Dict[str, Any]:
         "mode": header.mode,
         "started_at": _iso(header.started_at),
         "approve_preview_id": header.approve_preview_id,
+        "transaction_context": dict(header.transaction_context),
     }
 
 
@@ -218,14 +288,21 @@ def append_checkpoint(root: Path, run_id: str, event: Event) -> None:
 
 def _header_from_dict(payload: Mapping[str, Any], source: Path) -> CheckpointHeader:
     required = {"schema_version", "run_id", "daily_task_id", "mode", "started_at", "approve_preview_id"}
-    if set(payload) != required:
-        name = sorted((required - set(payload)) or (set(payload) - required))[0]
+    allowed = required | {"transaction_context"}
+    if not required <= set(payload) or not set(payload) <= allowed:
+        name = sorted((required - set(payload)) or (set(payload) - allowed))[0]
         raise LogValidationError(f"invalid checkpoint header field {name} in {source}")
     if payload["schema_version"] != SCHEMA_VERSION:
         raise LogValidationError(f"unsupported schema_version {payload['schema_version']} in {source}")
     preview_id = payload["approve_preview_id"]
     if preview_id is not None and not isinstance(preview_id, str):
         raise LogValidationError(f"approve_preview_id must be string or null in {source}")
+    context = payload.get("transaction_context", {})
+    if not isinstance(context, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str) or not key or not value
+        for key, value in context.items()
+    ):
+        raise LogValidationError(f"transaction_context must be a string object in {source}")
     return CheckpointHeader(
         schema_version=SCHEMA_VERSION,
         run_id=str(payload["run_id"]),
@@ -233,6 +310,7 @@ def _header_from_dict(payload: Mapping[str, Any], source: Path) -> CheckpointHea
         mode=str(payload["mode"]),
         started_at=_datetime(payload["started_at"], source, "started_at"),
         approve_preview_id=preview_id,
+        transaction_context=dict(context),
     )
 
 
@@ -278,16 +356,29 @@ def load_effective_runs(root: Path) -> Tuple[RunLog, ...]:
     sealed = tuple(iter_sealed_logs(root))
     sealed_ids = {log.run_id for log in sealed}
     active = []
-    active_by_day: Dict[str, str] = {}
+    active_by_key: Dict[Tuple[str, ...], str] = {}
     for checkpoint in iter_recoverable_checkpoints(root):
         if checkpoint.header.run_id in sealed_ids:
             continue
-        existing = active_by_day.get(checkpoint.header.daily_task_id)
+        header = checkpoint.header
+        context = header.transaction_context
+        if header.mode in {"run", "preflight"}:
+            key = ("daily", header.daily_task_id)
+        elif header.mode == "review":
+            key = (
+                "review",
+                context.get("cycle_id", ""),
+                context.get("review_kind", ""),
+                context.get("attempt", ""),
+            )
+        else:
+            key = (header.mode, context.get("cycle_id", header.run_id))
+        existing = active_by_key.get(key)
         if existing is not None:
             raise LogValidationError(
-                f"multiple active checkpoints for {checkpoint.header.daily_task_id}: {existing}, {checkpoint.header.run_id}"
+                f"multiple active checkpoints for {key}: {existing}, {checkpoint.header.run_id}"
             )
-        active_by_day[checkpoint.header.daily_task_id] = checkpoint.header.run_id
+        active_by_key[key] = checkpoint.header.run_id
         ended_at = checkpoint.events[-1].occurred_at if checkpoint.events else checkpoint.header.started_at
         active.append(
             RunLog(

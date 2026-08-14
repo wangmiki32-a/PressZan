@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
 
@@ -30,6 +30,61 @@ class CheckpointHeader:
     mode: str
     started_at: datetime
     approve_preview_id: Optional[str]
+    transaction_context: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ReviewAttempt:
+    attempt: int
+    status: str
+    due_at: datetime
+    automation_id: Optional[str]
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    failure_reason: Optional[str]
+    observed_photo_ids: FrozenSet[str]
+
+
+@dataclass(frozen=True)
+class ReviewSlot:
+    kind: str
+    status: str
+    due_at: Optional[datetime]
+    attempts: Tuple[ReviewAttempt, ...]
+    resolved_at: Optional[datetime]
+
+
+@dataclass(frozen=True)
+class CycleObservation:
+    photo_id: str
+    photographer_id: str
+    observed_at: datetime
+    observation_ref: str
+
+
+@dataclass(frozen=True)
+class EpisodeEvidence:
+    episode_id: str
+    photographer_id: str
+    outcome: str
+    expires_at: datetime
+    feedback_first_seen_at: Optional[datetime]
+    received_like_count: int
+    touch_count: int
+
+
+@dataclass(frozen=True)
+class FeedbackCycle:
+    cycle_id: str
+    attribution_eligible: bool
+    showcase_photo_ids: Tuple[str, ...]
+    baseline_pairs: FrozenSet[Tuple[str, str]]
+    touch_action_ids: Tuple[str, ...]
+    review_observations: Tuple[CycleObservation, ...]
+    like_completed_at: Optional[datetime]
+    review_1d: ReviewSlot
+    review_3d: ReviewSlot
+    status: str
 
 
 @dataclass(frozen=True)
@@ -60,6 +115,7 @@ class PhotographerStats:
     baseline_work_positions: Mapping[str, int]
     historical_high_potential: bool
     episodes: Tuple[FeedbackEpisode, ...]
+    eligible_episodes: Tuple[EpisodeEvidence, ...]
     last_comment_at: Optional[datetime]
     today_like_photo_ids: Tuple[str, ...]
     success_count_30d: int
@@ -99,6 +155,8 @@ class AggregateState:
     paused_reason: Optional[str]
     episodes: Mapping[str, FeedbackEpisode]
     outgoing_touches: Tuple[OutgoingTouch, ...]
+    cycles: Mapping[str, FeedbackCycle] = field(default_factory=dict)
+    latest_cycle_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
