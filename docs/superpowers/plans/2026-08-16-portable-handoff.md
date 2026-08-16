@@ -47,6 +47,7 @@
 - Create: `tests/test_workspace.py`
 
 **Interfaces:**
+- Produces: `find_checkout_root(start: Path) -> Path`，返回当前 normal clone 或 worktree checkout 根，供当前分支 Git index 检查使用。
 - Produces: `find_repository_root(start: Path) -> Path`
 - Produces: `resolve_state_root(explicit: Optional[str], environ: Mapping[str, str], start: Path) -> Path`
 - Consumes later: `command_doctor` and all existing CLI commands use the resolved absolute state root.
@@ -99,6 +100,7 @@ class WorkspaceTest(unittest.TestCase):
                 resolve_state_root(None, {}, script),
                 root / ".local/500px-feedback-growth",
             )
+            self.assertEqual(find_checkout_root(script), worktree)
 ```
 
 - [ ] **Step 2: Run the resolver tests and confirm RED**
@@ -114,27 +116,34 @@ STATE_ENV = "PRESSZAN_STATE_ROOT"
 STATE_RELATIVE = Path(".local") / "500px-feedback-growth"
 
 
-def find_repository_root(start: Path) -> Path:
+def find_checkout_root(start: Path) -> Path:
     current = start.resolve()
     if current.is_file():
         current = current.parent
     for candidate in (current, *current.parents):
         marker = candidate / ".git"
-        if marker.is_dir():
+        if marker.exists():
             return candidate
-        if marker.is_file():
-            line = marker.read_text(encoding="utf-8").strip()
-            if not line.startswith("gitdir: "):
-                raise WorkspaceError("invalid_git_file")
-            git_dir = Path(line.removeprefix("gitdir: "))
-            if not git_dir.is_absolute():
-                git_dir = (candidate / git_dir).resolve()
-            common_dir = git_dir.parent.parent
-            main_root = common_dir.parent
-            if common_dir.name == ".git" and main_root.exists():
-                return main_root
-            raise WorkspaceError("unsupported_worktree_layout")
-    raise WorkspaceError("repository_root_not_found")
+    raise WorkspaceError("checkout_root_not_found")
+
+
+def find_repository_root(start: Path) -> Path:
+    candidate = find_checkout_root(start)
+    marker = candidate / ".git"
+    if marker.is_dir():
+        return candidate
+    if marker.is_file():
+        line = marker.read_text(encoding="utf-8").strip()
+        if not line.startswith("gitdir: "):
+            raise WorkspaceError("invalid_git_file")
+        git_dir = Path(line.removeprefix("gitdir: "))
+        if not git_dir.is_absolute():
+            git_dir = (candidate / git_dir).resolve()
+        common_dir = git_dir.parent.parent
+        main_root = common_dir.parent
+        if common_dir.name == ".git" and main_root.exists():
+            return main_root
+        raise WorkspaceError("unsupported_worktree_layout")
 
 
 def resolve_state_root(explicit, environ, start):
@@ -237,7 +246,7 @@ for key in ("success", "failure", "open"):
     outcomes.setdefault(key, 0)
 ```
 
-`inspect_git_state` uses `subprocess.run(["git", "-C", str(repo_root), ...], check=False)` only for read-only commands. It compares actual `runs/*.md` with `git ls-files -- .local/500px-feedback-growth/runs/*.md` and checks representative local-only paths using `git check-ignore --no-index`. It returns explicit booleans and does not fetch or mutate Git.
+`inspect_git_state` uses `subprocess.run(["git", "-C", str(checkout_root), ...], check=False)` only for read-only commands。`checkout_root` 来自当前脚本所在 worktree，`state_root` 可以位于主仓库；函数按 repository-relative 文件名比较实际 `runs/*.md` 与当前分支 `git ls-files -- .local/500px-feedback-growth/runs/*.md`，并用 `git check-ignore --no-index` 检查代表性 local-only 路径。它返回明确布尔值，不 fetch、不修改 Git。
 
 Catch `LogValidationError` and `WorkspaceError` only. Required检查失败时返回 `_error("doctor_failed", errors=[...], report=report)`，让迁移前也能审计聚合结果；不要隐藏 unexpected exceptions。
 
@@ -320,7 +329,7 @@ Use the exact intent below:
 !.local/500px-feedback-growth/runs/*.md
 ```
 
-Copy no state files. Stage the existing main-state `runs/*.md` from `/Users/pony/Documents/ChatGPT/PressZan/.local/500px-feedback-growth/runs/` into the same repository-relative path in the worktree without changing bytes, then compare SHA-256 hashes for every source/destination pair.
+把现有主状态的 `runs/*.md` 逐字节复制到 worktree 同一 repository-relative 路径，不转换、不规范化内容；随后比较每一组源文件和目标文件的 SHA-256，再 stage 目标文件。
 
 - [ ] **Step 4: Verify state and privacy boundary**
 
