@@ -154,7 +154,7 @@ def seed_scheduled_cycle(root, due_at, cycle_id="c1", review_kind="review_3d"):
 
 
 class CliTest(unittest.TestCase):
-    def test_doctor_reports_portable_state_and_detects_untracked_bundle(self):
+    def test_doctor_reports_portable_versioned_state(self):
         result, payload = invoke_without_state_root(
             "doctor",
             "--now",
@@ -163,14 +163,13 @@ class CliTest(unittest.TestCase):
         )
 
         self.assertTrue(payload, result.stderr)
-        self.assertEqual(result.returncode, 2, payload)
-        self.assertEqual(payload["code"], "doctor_failed")
-        self.assertIn("untracked_sealed_runs", payload["errors"])
-        report = payload["report"]
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertTrue(payload["ok"])
+        report = payload
         self.assertTrue(Path(report["state_root"]).is_absolute())
         self.assertGreater(report["sealed_run_count"], 0)
         self.assertEqual(report["eligible_outcomes"], {"failure": 58, "open": 0, "success": 42})
-        self.assertFalse(report["git"]["all_sealed_runs_tracked"])
+        self.assertTrue(report["git"]["all_sealed_runs_tracked"])
         self.assertTrue(report["git"]["local_only_paths_ignored"])
 
     def test_doctor_fails_for_corrupt_log(self):

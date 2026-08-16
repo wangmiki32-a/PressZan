@@ -1,5 +1,10 @@
-# 私有运行状态与临时工作树
-.local/
+# 只版本化 sealed 运行事实；其他本地状态保持忽略
+.local/*
+!.local/500px-feedback-growth/
+.local/500px-feedback-growth/*
+!.local/500px-feedback-growth/runs/
+.local/500px-feedback-growth/runs/*
+!.local/500px-feedback-growth/runs/*.md
 .worktrees/
 .codex-log/
 
