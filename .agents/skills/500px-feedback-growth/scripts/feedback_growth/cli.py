@@ -3,6 +3,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -25,6 +26,7 @@ from .store import (
     read_checkpoint,
     seal_run,
 )
+from .workspace import resolve_state_root
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -60,10 +62,7 @@ def _error(code: str, **details) -> int:
 
 
 def _state_root(value: Optional[str]) -> Path:
-    if value:
-        return Path(value).resolve()
-    project_root = Path(__file__).resolve().parents[5]
-    return project_root / ".local" / "500px-feedback-growth"
+    return resolve_state_root(value, os.environ, Path(__file__))
 
 
 def _events_have_approval(logs: Iterable[RunLog]) -> bool:
