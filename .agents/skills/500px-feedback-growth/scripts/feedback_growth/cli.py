@@ -26,7 +26,13 @@ from .store import (
     read_checkpoint,
     seal_run,
 )
-from .workspace import resolve_state_root
+from .workspace import (
+    WorkspaceError,
+    find_checkout_root,
+    find_repository_root,
+    inspect_git_state,
+    resolve_state_root,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -1407,6 +1413,54 @@ def command_dashboard(args) -> int:
     return 0
 
 
+def command_doctor(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    try:
+        logs = load_effective_runs(root)
+        state = rebuild_state(logs, now)
+        sealed_run_count = sum(1 for _ in iter_sealed_logs(root))
+        eligible = {
+            item.episode_id: item
+            for stats in state.photographers.values()
+            for item in stats.eligible_episodes
+        }
+        outcomes = Counter(item.outcome for item in eligible.values())
+        for key in ("success", "failure", "open"):
+            outcomes.setdefault(key, 0)
+        checkout_root = find_checkout_root(Path(__file__))
+        repository_root = find_repository_root(Path(__file__))
+        git_state = inspect_git_state(checkout_root, root)
+    except LogValidationError as error:
+        return _error("doctor_failed", errors=["invalid_sealed_log"], message=str(error))
+    except WorkspaceError as error:
+        return _error("doctor_failed", errors=[str(error)])
+
+    report = {
+        "checkout_root": str(checkout_root),
+        "repository_root": str(repository_root),
+        "state_root": str(root),
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "sealed_run_count": sealed_run_count,
+        "eligible_outcomes": dict(sorted(outcomes.items())),
+        "latest_cycle_id": state.latest_cycle_id,
+        "git": git_state,
+    }
+    errors = []
+    if sealed_run_count == 0:
+        errors.append("sealed_runs_missing")
+    if not git_state["all_sealed_runs_tracked"]:
+        errors.append("untracked_sealed_runs")
+    if not git_state["local_only_paths_ignored"]:
+        errors.append("local_only_paths_not_ignored")
+    if not git_state["tracked_only_sealed_runs_under_local"]:
+        errors.append("unexpected_tracked_local_files")
+    if errors:
+        return _error("doctor_failed", errors=errors, report=report)
+    _json({"ok": True, **report})
+    return 0
+
+
 def _add_common(parser) -> None:
     parser.add_argument("--state-root")
     parser.add_argument("--now")
@@ -1585,6 +1639,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     dashboard = commands.add_parser("dashboard")
     _add_common(dashboard)
+
+    doctor = commands.add_parser("doctor")
+    _add_common(doctor)
     return parser
 
 
@@ -1616,6 +1673,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "finish": command_finish,
         "status": command_status,
         "dashboard": command_dashboard,
+        "doctor": command_doctor,
     }[args.command]
     try:
         return handler(args)

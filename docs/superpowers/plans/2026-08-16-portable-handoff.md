@@ -193,7 +193,7 @@ Add an `invoke_without_state_root(*args, cwd=None, environ=None)` helper and tes
 ```python
 def test_doctor_reports_portable_state_and_detects_untracked_bundle(self):
     result = subprocess.run(
-        ["python3", str(SCRIPT), "doctor", "--now", "2026-08-16T10:00:00+08:00"],
+        ["python3", str(SCRIPT), "doctor", "--now", "2026-08-16T16:00:00+08:00"],
         cwd=SCRIPT.parents[5],
         text=True,
         capture_output=True,
@@ -215,7 +215,7 @@ def test_doctor_fails_for_corrupt_log(self):
         root = Path(directory)
         (root / "runs").mkdir()
         (root / "runs/broken.md").write_text("not a run log", encoding="utf-8")
-        result, payload = invoke(root, "doctor", "--now", "2026-08-16T10:00:00+08:00")
+        result, payload = invoke(root, "doctor", "--now", "2026-08-16T16:00:00+08:00")
         self.assertEqual(result.returncode, 2)
         self.assertEqual(payload["code"], "doctor_failed")
         self.assertIn("invalid_sealed_log", payload["errors"])
@@ -296,7 +296,7 @@ class RepositoryStateTest(unittest.TestCase):
 
     def test_committed_state_rebuilds_expected_mature_outcomes(self):
         logs = load_effective_runs(ROOT / ".local/500px-feedback-growth")
-        state = rebuild_state(logs, datetime.fromisoformat("2026-08-16T10:00:00+08:00"))
+        state = rebuild_state(logs, datetime.fromisoformat("2026-08-16T16:00:00+08:00"))
         eligible = {
             item.episode_id: item
             for stats in state.photographers.values()
@@ -338,7 +338,7 @@ Run:
 ```bash
 python3 -m unittest -v tests.test_repository_state tests.test_cli tests.test_workspace
 python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py doctor \
-  --now 2026-08-16T10:00:00+08:00
+  --now 2026-08-16T16:00:00+08:00
 git status --short --ignored
 ```
 
@@ -473,11 +473,11 @@ Create a temporary local clone from the worktree branch, then run:
 
 ```bash
 python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py doctor \
-  --now 2026-08-16T10:00:00+08:00
+  --now 2026-08-16T16:00:00+08:00
 python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status \
-  --now 2026-08-16T10:00:00+08:00 --json
+  --now 2026-08-16T16:00:00+08:00 --json
 python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py dashboard \
-  --now 2026-08-16T10:00:00+08:00
+  --now 2026-08-16T16:00:00+08:00
 ```
 
 Expected: doctor reports 42/58/0 and absolute temp-clone state path; status loads history; Dashboard builds locally and remains untracked.

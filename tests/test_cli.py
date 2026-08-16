@@ -29,7 +29,20 @@ def invoke(root, *args):
         capture_output=True,
         check=False,
     )
-    payload = json.loads(result.stdout)
+    payload = json.loads(result.stdout) if result.stdout else {}
+    return result, payload
+
+
+def invoke_without_state_root(*args, cwd=None, environ=None):
+    result = subprocess.run(
+        ["python3", str(SCRIPT), *args],
+        cwd=cwd,
+        env=environ,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    payload = json.loads(result.stdout) if result.stdout else {}
     return result, payload
 
 
@@ -141,6 +154,38 @@ def seed_scheduled_cycle(root, due_at, cycle_id="c1", review_kind="review_3d"):
 
 
 class CliTest(unittest.TestCase):
+    def test_doctor_reports_portable_state_and_detects_untracked_bundle(self):
+        result, payload = invoke_without_state_root(
+            "doctor",
+            "--now",
+            "2026-08-16T16:00:00+08:00",
+            cwd=SCRIPT.parents[4],
+        )
+
+        self.assertTrue(payload, result.stderr)
+        self.assertEqual(result.returncode, 2, payload)
+        self.assertEqual(payload["code"], "doctor_failed")
+        self.assertIn("untracked_sealed_runs", payload["errors"])
+        report = payload["report"]
+        self.assertTrue(Path(report["state_root"]).is_absolute())
+        self.assertGreater(report["sealed_run_count"], 0)
+        self.assertEqual(report["eligible_outcomes"], {"failure": 58, "open": 0, "success": 42})
+        self.assertFalse(report["git"]["all_sealed_runs_tracked"])
+        self.assertTrue(report["git"]["local_only_paths_ignored"])
+
+    def test_doctor_fails_for_corrupt_log(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "runs").mkdir()
+            (root / "runs" / "broken.md").write_text("not a run log", encoding="utf-8")
+
+            result, payload = invoke(root, "doctor", "--now", "2026-08-16T16:00:00+08:00")
+
+            self.assertTrue(payload, result.stderr)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "doctor_failed")
+            self.assertIn("invalid_sealed_log", payload["errors"])
+
     def _begin_cycle(self, root, cycle_id="c1", count=5):
         now = "2026-08-14T09:00:00+00:00"
         result, begun = invoke(root, "begin", "--mode", "cycle", "--cycle-id", cycle_id, "--now", now)
