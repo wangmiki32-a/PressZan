@@ -29,6 +29,7 @@ flowchart LR
 ### 状态与算法层
 
 - `store.py`：校验并读写 Markdown checkpoint 和 sealed log。
+- `workspace.py`：定位当前 checkout、主仓库和唯一状态根，并执行只读 Git 边界检查。
 - `cycles.py`：从 cycle/review/migration 事件重建冻结 scope、两次回顾槽和 scoped episode evidence。
 - `analytics.py`：按事件顺序重建摄影师、episode、每日任务，并只把 eligible evidence 交给分层、KPI 和选择算法。
 - `selector.py`：在每日配额、覆盖率和单人上限内执行可复现选择。
@@ -46,13 +47,23 @@ Dashboard 的回顾基线是最近一个产生确认点赞的执行日，而不�
 | 数据 | 权威来源 | 是否可直接修改 |
 |---|---|---|
 | 页面动作是否成功 | 动作前后同一可见控件状态 | 否，只能重新读取 |
-| 活动运行进度 | `.local/.../checkpoints/*.md` | 否，只能通过 CLI 追加 |
-| 已完成运行 | `.local/.../runs/*.md` | 否，sealed 后不可覆盖 |
+| 活动运行进度 | `.local/.../checkpoints/*.md` | 否，只能通过 CLI 追加；仅原机器保存 |
+| 已完成运行 | `.local/.../runs/*.md` | 否，sealed 后不可覆盖；在私有 Git 中共享 |
 | 聚合摄影师状态 | 从有效日志重建 | 否，属于派生状态 |
 | Dashboard | 从聚合状态生成 | 可以重建，不作为输入 |
 | 设计和工作约定 | Git 中的文档、代码、测试、ADR | 通过正常变更流程维护 |
 
 具体决策见 [ADR-0001：追加式事件日志](decisions/ADR-0001-append-only-event-log.md)。
+
+## Git-backed sealed event store
+
+私有 Git 只版本化 `.local/500px-feedback-growth/runs/*.md`。它们既是运行时事实源，也是跨机器交接包，不存在第二份导入快照。摄影师分层、周期证据、回馈结果和 Dashboard 都从这些日志重建。
+
+Checkpoint 代表尚未封存的动作边界，不能安全地跨机器续跑，因此继续只保存在创建它的机器。Dashboard 是可重建视图；Codex Automation 是宿主机器资源；两者都不进入 Git。浏览器凭证始终不属于项目状态。
+
+默认状态根按 `--state-root`、`PRESSZAN_STATE_ROOT`、主仓库 `.local/500px-feedback-growth` 的顺序解析。代码在 worktree 中运行时，Git 检查使用当前 checkout 的 branch index，运行事实仍回到主仓库状态根，避免形成第二套历史。
+
+同一账号采用串行交接：执行者 pull 并通过 `doctor` 后才开始页面互动，运行 sealed 后再提交和推送新增日志。详细决定见 [ADR-0003：私有 Git 版本化 sealed runs](decisions/ADR-0003-git-backed-sealed-runs.md)。
 
 ## 运行生命周期
 
@@ -85,7 +96,7 @@ Dashboard 的回顾基线是最近一个产生确认点赞的执行日，而不�
 
 ### Review 与成熟
 
-1. Codex 宿主为每个 intent 创建一次性 Automation；任务只保存 cycle/context 和绝对 state root。
+1. Codex 宿主为每个 intent 创建一次性 Automation；任务只保存 cycle/context 和当前机器解析出的绝对 state root。
 2. `review_1d`、`review_3d` 独立执行，只读扫描冻结 5 张并逐图追加完整 liker 列表。
 3. baseline 已有 pair、冻结范围外 observation、abandoned 或不可归因周期不进入算法证据。
 4. +70h 完成后 episode 仍可能 open；到各自 `expires_at` 后，读时派生 failure，不写第二套结算状态。

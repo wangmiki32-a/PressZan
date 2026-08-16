@@ -20,30 +20,33 @@ description: Use when a user asks to run, resume, preview, inspect, or visualize
 | `status` | 只读显示进度、暂停和摄影师分层 |
 | `preflight` | 只读刷新回馈并生成候选预览 |
 | `dashboard` | 从日志重建本地 Dashboard |
+| `doctor` | 只读检查迁移状态、Git 边界和聚合证据 |
 
 用户不需要输入 `preview_id`、`run_id` 或内部 CLI 参数。执行 `preflight` 或真实互动前，完整读取 [浏览器工作流](references/browser-workflow.md) 和 [运行恢复手册](references/operational-recovery.md)；重建或解释 Dashboard 前读取 [Dashboard 统计语义](references/dashboard-semantics.md)；排查事件时再读取 [事件 schema](references/event-schema.md)。
 
 内部命令统一使用：
 
 ```bash
-python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command> \
-  --state-root /Users/pony/Documents/ChatGPT/PressZan/.local/500px-feedback-growth
+python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command>
 ```
+
+默认状态根由 CLI 从仓库位置解析；只有测试、受控恢复或外部调度才使用 `--state-root` 或 `PRESSZAN_STATE_ROOT`。
 
 ## 默认启动
 
 上传和分享由用户手动完成。Skill 从点赞周期开始负责“冻结公开作品 → baseline → 点赞 → +20h 回顾 → +70h 回顾 → Dashboard”。
 
-1. 先执行 `status --json` 和 `cycle-status`。上一周期尚未结算时，不开始新一轮点赞；用户仍可手动上传和调整展示。
-2. 若返回同日 recoverable run，执行 `resume --run-id <run_id>`，继续同一个 run；不得新建运行或重复动作。若返回 `stale_recoverable_run`，不得跨日追加动作，先封存旧日为 `paused_incomplete`，再开始新日任务。
-3. 新周期先 `begin --mode cycle --cycle-id <cycle_id>`：按主页当前顺序确认并冻结 5 张公开本人作品，逐张完整读取当前点赞者作为 baseline；不是 5 张、账号不符、非公开或任一张未完成读取时禁止点赞。
-4. 若首次尚未批准，执行只读 preflight，展示候选数、层级、配额和风险摘要，只询问“确认执行？”。
-5. 已批准且 baseline 已 sealed 时，使用 `begin --mode run --cycle-id <cycle_id>` 绑定周期并连续执行到当日累计 100。
+1. 先执行 `doctor`。只有 `ok=true` 才继续；日志未跟踪、路径漂移或本地状态不明确时，不打开 500px 页面。
+2. 执行 `status --json` 和 `cycle-status`。上一周期尚未结算时，不开始新一轮点赞；用户仍可手动上传和调整展示。
+3. 若返回同日 recoverable run，执行 `resume --run-id <run_id>`，继续同一个 run；不得新建运行或重复动作。若返回 `stale_recoverable_run`，不得跨日追加动作，先封存旧日为 `paused_incomplete`，再开始新日任务。
+4. 新周期先 `begin --mode cycle --cycle-id <cycle_id>`：按主页当前顺序确认并冻结 5 张公开本人作品，逐张完整读取当前点赞者作为 baseline；不是 5 张、账号不符、非公开或任一张未完成读取时禁止点赞。
+5. 若首次尚未批准，执行只读 preflight，展示候选数、层级、配额和风险摘要，只询问“确认执行？”。
+6. 已批准且 baseline 已 sealed 时，使用 `begin --mode run --cycle-id <cycle_id>` 绑定周期并连续执行到当日累计 100。
 
 ## 周期回顾自动化
 
 1. 点赞运行以最后一次 `outgoing_like_confirmed` 为时间基准。正常完成或候选耗尽且至少成功点赞 1 次后，原子记录 `cycle_like_completed` 和两个调度 intent。
-2. 为本周期临时创建两个一次性任务：`+20h` 的 `review_1d` 与 `+70h` 的 `review_3d`。不得创建周期性轮询任务。
+2. 在当前执行机器为本周期临时创建两个一次性任务：`+20h` 的 `review_1d` 与 `+70h` 的 `review_3d`。不得创建周期性轮询任务；Automation 不随 Git 迁移。
 3. 两次任务都只读：只扫描本周期冻结 5 张作品，完整记录每张作品当前点赞者；不得点赞、评论、关注、私信或修改展示。
 4. baseline 中已经存在的 `(photo_id, photographer_id)` 不算新回馈。冻结范围内、首次观察晚于触达且不超过 episode expiry 的新 pair 才进入 scoped attribution。
 5. `+70h` 是最后一次主动观察，不等于 72 小时成熟。到达每个 episode 的 `expires_at` 后，下一次状态或 Dashboard 重建才把仍无回馈者派生为 failure。
@@ -93,10 +96,17 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command
 - 普通加载失败只刷新读取一次；仍失败则记录 `scan_issue` 或 `candidate_skipped`。
 - Checkpoint 与 sealed log 只追加；聚合状态和 Dashboard 必须能从日志重建。
 
+## 跨机器交接
+
+- 私有 Git 只共享 sealed `runs/*.md`；Dashboard、Automation、浏览器认证和未封存 checkpoint 不迁移。
+- 同一账号必须串行执行。开始前先 pull 并通过 `doctor`；运行封存后提交并推送新增 runs。
+- 未封存 checkpoint 只能在产生它的机器恢复。另一台机器不得猜测页面动作或创建替代 run。
+- 账号主页 `Dora0125` 和稳定用户 ID 仍是固定安全校验，不因执行者或 clone 路径改变。
+
 ## 已验证经验
 
 - 候选读取先于点赞弹层，避免弹层遮挡或异步加载造成假空白。
 - 新鲜 preview 只复核批准候选；重复完整 preflight 会变慢并增加 `preview_changed`。
-- 所有内部命令显式使用主工作区绝对 `state-root`，避免 worktree 产生第二份状态。
+- CLI 根据 checkout 与 Git common directory 自动回到主仓库状态根；worktree 不产生第二份状态。
 - 临时命令每次校验当前 `run_id`、`scan_id` 和写入结果，不复用写死的旧 ID。
 - 历史点赞者只能初始化为 promising；滚动 30 天内至少 2 次独立归因回馈才是 verified。

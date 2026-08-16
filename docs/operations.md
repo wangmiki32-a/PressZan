@@ -10,23 +10,24 @@
 - [`browser-workflow.md`](../.agents/skills/500px-feedback-growth/references/browser-workflow.md)
 - [`operational-recovery.md`](../.agents/skills/500px-feedback-growth/references/operational-recovery.md)
 
-## 固定路径
+## 状态根解析
 
-所有 CLI 命令必须指向主工作区状态根：
+正常 clone 不需要配置路径。CLI 按以下顺序解析唯一状态根：
 
-```text
-/Users/pony/Documents/ChatGPT/PressZan/.local/500px-feedback-growth
-```
+1. 显式 `--state-root PATH`，用于测试和受控恢复；
+2. 环境变量 `PRESSZAN_STATE_ROOT`，用于特殊安装或外部调度；
+3. 主仓库 `.local/500px-feedback-growth`。
 
-不要依赖当前工作目录推导状态根，也不要使用 `.worktrees/.../.local`。工作树可以承载代码，不能承载第二份运行事实。
+在 worktree 中运行代码时，resolver 会回到主仓库状态根，不创建 `.worktrees/.../.local` 第二份事实。每轮 Automation 记录的是创建任务机器当时解析出的绝对路径，不能复制到另一台机器继续使用。
 
 ## 开始前检查
 
 ```bash
-python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status \
-  --state-root /Users/pony/Documents/ChatGPT/PressZan/.local/500px-feedback-growth \
-  --json
+python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py doctor
+python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status --json
 ```
+
+`doctor` 必须先通过。它只读验证路径、sealed logs、聚合证据和 Git 边界；不读取 Chrome 凭证、不访问 500px、不修改日志。
 
 根据结果处理：
 
@@ -78,7 +79,16 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 2. 两次任务只读扫描冻结 5 张，逐张记录完整 liker 列表；5/5 后封存并重建 Dashboard。
 3. +70h 完成不提前判失败；episode 到 72 小时 expiry 后，下一次重建才显示成熟结果。
 4. 任务创建后未绑定日志时，用确定性名称和 payload digest 恢复；禁止盲目再建同名任务。
-5. 当前历史周期已经人工完成约 +19 小时的 1 日回顾，迁移时只创建 +70h 任务。
+5. 已结算的历史周期不重建 Automation；只有新的点赞周期在实际执行机器创建两次任务。
+
+## 跨机器串行交接
+
+1. GitHub 仓库保持私有，协作者使用自己的 GitHub 身份 clone。
+2. 开始前先 pull，再运行 `doctor`。远端状态、tracked runs 或本地 checkpoint 不明确时禁止开始新的互动。
+3. 同一账号同一时间只允许一台机器执行；不使用分支合并来调和两个并发点赞批次。
+4. 运行达到终态并生成 sealed log 后，提交并推送新增 `runs/*.md`；另一台机器下次执行前再 pull。
+5. 未封存 checkpoint 不进入 Git，只能在原机器恢复。若原机器不可用，不得在另一台机器猜测已执行动作；先人工核对页面并按安全暂停处理。
+6. Dashboard 在每台机器本地重建。Automation 不随 Git 迁移，新周期由实际执行机器重新创建。
 
 ## 已验证故障与最短恢复
 
@@ -108,6 +118,7 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 - 两位候选主页作品不可读，被跳过且没有消耗成功额度。
 - 当时尚无 `verified` 摄影师，因此没有发送评论；不能为了增加互动而放宽评论资格。
 - 次日旧口径扫描曾写入 51 个 success；它包含最近 30 张的观察，不能直接代表冻结 5 张 scoped 回馈。迁移后由 baseline、冻结 scope 和原始 observation 重新计算，旧 success 仅保留审计。
+- 当前迁移回归基线为 14 份 sealed logs、42 个成熟归因回馈、58 个成熟未回馈、0 个 open；它用于验证迁移没有改变事实，不是永久业务常量。
 
 这些结果形成的长期规则已经分别进入 `AGENTS.md`、本手册和 skill references；运行 ID、preview ID、摄影师名单和个人互动细节只保留在本地日志。
 
@@ -120,3 +131,4 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 5. Dashboard 的“最近执行”、互斥 episode 结果和成熟 KPI 符合 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。
 6. 新出现的问题只有在重复出现且解法稳定后，才更新长期文档。
 7. 有 cycle 时检查冻结 5/5、两个回顾槽、baseline 排除和 maturity tail；不得用旧 raw success 替代 eligible evidence。
+8. 生成新的 sealed log 后已提交并推送；checkpoint、Dashboard 和认证信息仍未被 Git 跟踪。

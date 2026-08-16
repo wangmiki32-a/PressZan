@@ -3,9 +3,30 @@ import unittest
 
 
 ROOT = Path(__file__).parents[1] / ".agents" / "skills" / "500px-feedback-growth"
+PROJECT_ROOT = Path(__file__).parents[1]
 
 
 class SkillContractTest(unittest.TestCase):
+    def test_portable_handoff_contract_is_explicit(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        recovery = (ROOT / "references" / "operational-recovery.md").read_text(encoding="utf-8")
+        schema = (ROOT / "references" / "event-schema.md").read_text(encoding="utf-8")
+        agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+
+        for text in (skill, agents, readme, operations):
+            self.assertNotIn("/Users/pony/Documents/ChatGPT/PressZan", text)
+        self.assertIn("doctor", skill)
+        self.assertLess(skill.index("doctor"), skill.index("status --json"))
+        self.assertIn("PRESSZAN_STATE_ROOT", operations)
+        self.assertIn("runs/*.md", agents)
+        self.assertIn("私有", agents)
+        self.assertIn("串行", recovery)
+        self.assertIn("未封存", recovery)
+        self.assertIn("Automation 不随 Git 迁移", recovery)
+        self.assertIn("Git-backed", schema)
+
     def test_entrypoint_routes_all_public_operations_and_cli_lifecycle(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
 

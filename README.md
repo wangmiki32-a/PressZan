@@ -17,17 +17,25 @@
 状态检查命令：
 
 ```bash
-python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status \
-  --state-root /Users/pony/Documents/ChatGPT/PressZan/.local/500px-feedback-growth \
-  --json
+python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py doctor
+python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status --json
 ```
 
 重建 Dashboard：
 
 ```bash
-python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py dashboard \
-  --state-root /Users/pony/Documents/ChatGPT/PressZan/.local/500px-feedback-growth
+python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py dashboard
 ```
+
+## 交给朋友执行
+
+1. 保持 GitHub 仓库为私有，并把朋友加入 collaborator。
+2. 朋友 clone 仓库后，用 Codex 打开仓库根目录。
+3. 在自己的 Chrome 中手动登录同一个 500px 账号；不要复制 Chrome profile、Cookie 或 token。
+4. 先运行 `doctor`。通过后调用 `$500px-feedback-growth`。
+5. 两台机器不得并发执行。执行者开始前先 pull，封存运行后提交并推送新增的 `runs/*.md`。
+
+Git 只同步 sealed 历史。未完成运行的 checkpoint 和一次性 Automation 不随仓库迁移，只能在原执行机器恢复。
 
 运行测试：
 
@@ -56,12 +64,16 @@ git diff --check
 │   ├── decisions/                    # 长期架构决策记录
 │   └── superpowers/                  # 已批准设计与实施计划
 ├── tests/                             # 无真实外部互动的确定性测试
-└── .local/500px-feedback-growth/      # 私有运行日志、checkpoint 和 Dashboard
+└── .local/500px-feedback-growth/
+    ├── runs/*.md                      # 私有 Git 中共享的 sealed 历史
+    ├── checkpoints/                   # 当前机器恢复状态，不进入 Git
+    └── dashboard.html                 # 本地派生视图，不进入 Git
 ```
 
 ## 安全与数据边界
 
-- `.local/500px-feedback-growth/` 包含个人互动记录，只保存在本地且不进入 Git。
+- `runs/*.md` 包含摄影师身份、互动记录和回馈关系，只允许进入私有 Git；不得公开仓库。
+- checkpoint、Dashboard、Automation 和浏览器认证不进入 Git。
 - 浏览器执行只读取可见页面状态，不读取或保存密码、Cookie、token、local storage。
 - CAPTCHA、限频、登录失效、平台警告、账号不匹配或互动状态不明确时立即停止。
 - 只有页面明确显示 `not_liked → liked` 或评论可见，才记录成功。

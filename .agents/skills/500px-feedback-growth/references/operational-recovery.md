@@ -12,7 +12,8 @@
 | 点赞数字可见、弹层条目为 0 | 弹层异步加载或首次展开失败 | 刷新读取一次；仍为 0 才追加 `scan_issue: liker_list_unavailable` |
 | 评论区首次为 0、历史或当前页面明显有评论 | 评论异步加载或点赞弹层遮挡 | 关闭弹层/重新导航并只刷新一次；先读评论候选，再打开点赞弹层 |
 | 批准返回 `preview_changed` | 候选、顺序或 quota snapshot 已变化 | 封存为 `approval_rejected`，生成新 preflight；不得继续旧名单 |
-| 主分支与 worktree 都有 `.local` | 状态根目录漂移 | 所有 CLI 显式使用主工作区绝对 `--state-root`，不得从 worktree 继续累计 |
+| worktree 出现独立 `.local` | 状态根目录漂移 | 运行 `doctor`；默认 resolver 必须回到主仓库，异常时用 `PRESSZAN_STATE_ROOT` 指向唯一状态根 |
+| `doctor` 返回 `untracked_sealed_runs` | 当前机器状态尚未提交，或 clone 未拉到最新 runs | 不进入页面；先确认无未封存 checkpoint，再提交/pull sealed runs 后重试 |
 | checkpoint 事件落入旧运行 | 临时脚本写死旧 `run_id` | 每次生成脚本后先核对 `run_id`、`scan_id`、`state-root`；每页写入后检查返回 position |
 | `resume` 返回 `run_not_recoverable` | run 已 sealed、ID 过期或不是当前 active run | 回到 `status --json`；只恢复返回的 recoverable run，不向 retained checkpoint 追加 |
 | `begin` 返回 `stale_recoverable_run` | 旧日 active run 跨过 Asia/Shanghai 日界线 | 不 resume、不追加动作；封存旧日为 `paused_incomplete`，再开始新日任务 |
@@ -40,10 +41,18 @@
 - 只有确认达到 100、安全暂停或候选耗尽时才封存 run。未知中断不得伪写 `completed`。
 - 跨日 active run 是例外：旧日额度不结转，`resume`/`event` 返回 `daily_task_expired`，需封存旧日未完成状态后再开始新日。
 
+## 跨机器恢复边界
+
+- 同一账号只能串行执行：新机器开始前 pull 并通过 `doctor`，原机器生成 sealed log 后先 commit/push。
+- Git 只同步 sealed runs。未封存 checkpoint 不进入 Git，只能在创建它的原机器恢复。
+- 原机器不可用且存在未封存运行时，不得在另一台机器创建替代 run 或猜测已完成动作；保持暂停，人工核对账号页面状态。
+- Dashboard 在各机器从日志重建。Automation 不随 Git 迁移，也不复制其绝对 `state_root`。
+- 固定账号身份检查不随执行者变化；朋友必须登录同一账号，账号不匹配立即停止。
+
 ## 临时回顾任务恢复
 
 - 每个点赞周期只创建两个一次性只读任务：`+20h review_1d` 和 `+70h review_3d`；不得创建周期性轮询任务。
-- Automation 只携带 `cycle_id`、`review_kind`、`attempt`、`due_at` 和主工作区绝对 `state_root`，不携带作品、摄影师、Cookie 或页面认证数据。
+- Automation 只携带 `cycle_id`、`review_kind`、`attempt`、`due_at` 和创建机器解析出的绝对 `state_root`，不携带作品、摄影师、Cookie 或页面认证数据。
 - 任务执行前先匹配 schedule intent 的 payload digest；同名同 payload 是幂等恢复，同名不同 payload 是冲突，禁止覆盖。
 - Review checkpoint 可以跨 Asia/Shanghai 日界线恢复，但只能恢复完全相同的 cycle/kind/attempt。每张冻结作品的完整 liker 列表写入一次，5/5 后才完成。
 - 回顾失败要写 `review_failed` 并通知用户；不得把未扫描作品当作零点赞。用户明确授权 retry 后使用 `attempt+1` 新建一次性任务。

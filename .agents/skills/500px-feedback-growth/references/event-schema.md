@@ -2,6 +2,8 @@
 
 状态根目录默认为项目 `.local/500px-feedback-growth/`。`checkpoints/*.md` 只追加；`runs/*.md` 是 sealed source of truth。每段规范数据使用一个 `json` fenced block，`schema_version` 当前为 `1`。
 
+`runs/*.md` 是 Git-backed sealed event store，只进入私有 Git；已提交日志不得编辑、覆盖、移动或删除。`checkpoints/*.md` 只在创建它的机器保存，不进入 Git；Dashboard、Automation 和浏览器认证也不是事件状态。跨机器只通过 pull/commit/push 交接 sealed runs，不复制 active checkpoint。
+
 ## 通用格式
 
 ```json

@@ -26,11 +26,13 @@
 ## 事实源与文件边界
 
 - `.local/500px-feedback-growth/runs/*.md` 是运行状态的 sealed source of truth。
-- `checkpoints/*.md` 是只追加的恢复证据；存在同一 `run_id` 的 sealed log 时，以 sealed log 为准。
+- `runs/*.md` 明文进入私有 Git，供授权协作者延续历史；仓库不得公开。
+- `checkpoints/*.md` 是仅限当前机器的只追加恢复证据，不进入 Git；存在同一 `run_id` 的 sealed log 时，以 sealed log 为准。
 - Dashboard 和聚合状态都是派生物，必须能从日志重建，不能反向修改事实。
 - 不得手工编辑、覆盖、移动或删除 `.local/500px-feedback-growth/` 中的日志、checkpoint 或 Dashboard。
-- 所有 CLI 调用必须显式传入主工作区绝对 `--state-root /Users/pony/Documents/ChatGPT/PressZan/.local/500px-feedback-growth`，不得从 `.worktrees/` 下累计第二份状态。
-- `.local/500px-feedback-growth/`、账号互动数据和生成的 Dashboard 不进入 Git。
+- CLI 默认解析主仓库 `.local/500px-feedback-growth`；优先级为显式 `--state-root`、`PRESSZAN_STATE_ROOT`、仓库默认值。不得从 worktree 累计第二份状态。
+- Git 只允许跟踪 `.local/500px-feedback-growth/runs/*.md`；checkpoint、Dashboard、环境变量、浏览器认证和其他本地状态继续忽略。
+- 同一 500px 账号只能由一台机器串行执行：开始前 pull 并运行 `doctor`，结束并封存后提交、推送新增 runs；未封存 checkpoint 只能在原机器恢复。
 - 不覆盖或回滚与当前任务无关的未提交改动；发现冲突先说明具体文件。
 - `main` 是交付状态的判断基线。声称实施完成前必须检查 `git status`、`git worktree list` 和相关分支差异；不能把只存在于 worktree 的实现误报为已经进入主分支。
 
@@ -38,7 +40,7 @@
 
 ### 启动与恢复
 
-- 任何浏览器变更前先执行 `status --json`。
+- 任何浏览器变更前先执行 `doctor`，通过后再执行 `status --json`。doctor 未通过时不得开始新的页面互动。
 - 如果存在 active/recoverable run，先 `resume --run-id <run_id>`，不得创建新 run 或重复已确认动作。
 - Active run 只能在其 `daily_task_id` 当日恢复；跨 Asia/Shanghai 日界线后先封存为未完成，禁止把新动作追加到旧日任务。
 - 默认公开入口是零参数 `$500px-feedback-growth`；一次显式启动授权完成当日剩余额度，目标为当日累计 100。
@@ -75,7 +77,7 @@
 
 - 修改前先搜索现有实现、测试和文档，优先做最小完整改动。
 - 运行逻辑保持 Python 3.9 标准库兼容；新增生产依赖前必须获得用户确认。
-- 保持模块职责：`store.py` 管日志，`cycles.py` 重建周期和 scoped evidence，`analytics.py` 聚合状态，`selector.py` 选候选，`automation.py` 生成纯数据调度请求，`dashboard.py` 生成视图，`cli.py` 编排命令。
+- 保持模块职责：`store.py` 管日志，`workspace.py` 解析仓库/状态根并检查 Git 边界，`cycles.py` 重建周期和 scoped evidence，`analytics.py` 聚合状态，`selector.py` 选候选，`automation.py` 生成纯数据调度请求，`dashboard.py` 生成视图，`cli.py` 编排命令。
 - 事件 schema、归因、配额、安全停机或 preview 审批行为变化时，必须先补测试，再同步 `SKILL.md`、对应 reference、架构/运行文档和必要 ADR。
 - 不使用真实点赞或评论做自动化测试；测试必须使用临时状态目录、固定时钟和固定随机种子。
 - 统计聚合必须按事件时间和业务主键确定性排序，不能依赖文件遍历、字典插入或 worktree 当前目录顺序。
@@ -97,6 +99,7 @@ git diff --check
 
 - 修改 CLI：运行相关 `tests.test_cli`。
 - 修改状态或日志：运行 `tests.test_store`、`tests.test_analytics`。
+- 修改路径、迁移或 Git 状态边界：运行 `tests.test_workspace`、`tests.test_repository_state`。
 - 修改选择算法：运行 `tests.test_selector`。
 - 修改 Dashboard：运行 `tests.test_dashboard`，并在桌面和窄窗口做视觉 QA。
 - 修改 skill 结构或文案：运行 `tests.test_skill_contract` 和 skill 结构验证。
