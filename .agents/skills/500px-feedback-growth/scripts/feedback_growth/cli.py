@@ -15,7 +15,7 @@ from .analytics import WINDOW, classify_photographer, rebuild_state
 from .automation import build_review_request, build_review_requests
 from .dashboard import generate_dashboard
 from .model import Candidate, CheckpointHeader, Event, RunLog
-from .selector import DAILY_TARGET, select_run_candidates
+from .selector import DAILY_PHOTOGRAPHER_TARGET, select_run_candidates
 from .store import (
     LogValidationError,
     append_checkpoint_events,
@@ -182,7 +182,15 @@ def _quota_snapshot(state, now: datetime) -> Mapping[str, object]:
         "confirmed_likes": daily.confirmed_likes if daily else 0,
         "quota_counts": dict(daily.quota_counts) if daily else {},
         "unique_photographers": sorted(daily.unique_photographer_ids) if daily else [],
+        "covered_photographers": sorted(daily.covered_photographer_ids) if daily else [],
     }
+
+
+def _remaining_photographer_quota(daily) -> int:
+    if daily and daily.status == "completed":
+        return 0
+    covered = len(daily.covered_photographer_ids) if daily else 0
+    return max(0, DAILY_PHOTOGRAPHER_TARGET - covered)
 
 
 def _all_previews(root: Path) -> List[Tuple[Event, RunLog]]:
@@ -312,7 +320,7 @@ def command_begin(args) -> int:
         if any(item.kind == "cycle_run_bound" for item in sealed_events):
             return _error("cycle_run_already_bound")
     daily = state.daily_tasks.get(_day(now))
-    if args.mode == "run" and daily and daily.confirmed_likes >= DAILY_TARGET:
+    if args.mode == "run" and daily and _remaining_photographer_quota(daily) == 0:
         return _error("daily_complete")
     run_id = f"{args.mode}-{uuid.uuid4().hex}"
     daily_task_id = _day(now)
@@ -365,13 +373,14 @@ def command_begin(args) -> int:
         )
     if args.mode in {"run", "preflight"}:
         _append_expired_episodes(root, run_id, now, state)
-    remaining = DAILY_TARGET - (daily.confirmed_likes if daily else 0)
+    remaining = _remaining_photographer_quota(daily)
     _json(
         {
             "ok": True,
             "run_id": run_id,
             "daily_task_id": daily_task_id,
             "remaining_daily_quota": remaining,
+            "remaining_photographer_quota": remaining,
             "onboarding_approved": _events_have_approval(effective),
             "recoverable_run_id": None,
             "transaction_context": context,
@@ -421,14 +430,21 @@ def command_event(args) -> int:
     if any(item.kind == "safety_paused" for item in checkpoint.events) and args.kind.startswith("outgoing_"):
         return _error("run_paused")
     data = _parse_fields(args.field)
+    if args.kind == "outgoing_comment_confirmed" and data.get("content") != "👍👍👍":
+        return _error("invalid_comment_content", expected="👍👍👍")
     event = Event(args.kind, now, data)
     additions = [event]
     state = rebuild_state(load_effective_runs(root), now)
-    if args.kind == "outgoing_like_confirmed":
+    if args.kind in {"outgoing_like_confirmed", "candidate_skipped"}:
         day = checkpoint.header.daily_task_id
         daily = state.daily_tasks.get(day)
-        if daily and daily.confirmed_likes >= DAILY_TARGET:
+        photographer_id = str(data["photographer_id"])
+        if daily and photographer_id in daily.covered_photographer_ids:
+            return _error("photographer_already_covered", photographer_id=photographer_id)
+        if daily and _remaining_photographer_quota(daily) == 0:
             return _error("daily_complete")
+    if args.kind == "outgoing_like_confirmed":
+        day = checkpoint.header.daily_task_id
         expected_action = _action_id(day, str(data["photographer_id"]), str(data["photo_id"]), args.kind)
         if data.get("action_id") != expected_action:
             return _error("invalid_action_id", expected=expected_action)
@@ -1237,7 +1253,7 @@ def command_preview(args) -> int:
     checkpoint = read_checkpoint(root, args.run_id)
     state = rebuild_state(load_effective_runs(root), now)
     quota_snapshot = _quota_snapshot(state, now)
-    remaining = DAILY_TARGET - int(quota_snapshot["confirmed_likes"])
+    remaining = max(0, DAILY_PHOTOGRAPHER_TARGET - len(quota_snapshot["covered_photographers"]))
     result = select_run_candidates(_candidates(checkpoint, state), state, now, args.seed, remaining)
     plan = list(result.selected)
     preview_id = f"preview-{uuid.uuid4().hex}"
@@ -1352,9 +1368,13 @@ def command_finish(args) -> int:
     if checkpoint.header.mode == "run" and args.status == "completed":
         state = rebuild_state(load_effective_runs(root), now)
         daily = state.daily_tasks.get(checkpoint.header.daily_task_id)
-        confirmed = daily.confirmed_likes if daily else 0
-        if confirmed != DAILY_TARGET:
-            return _error("daily_incomplete", confirmed_likes=confirmed, target=DAILY_TARGET)
+        covered = len(daily.covered_photographer_ids) if daily else 0
+        if covered != DAILY_PHOTOGRAPHER_TARGET:
+            return _error(
+                "daily_incomplete",
+                covered_photographers=covered,
+                target=DAILY_PHOTOGRAPHER_TARGET,
+            )
     likes = sum(item.kind == "outgoing_like_confirmed" for item in checkpoint.events)
     comments = sum(item.kind == "outgoing_comment_confirmed" for item in checkpoint.events)
     events = checkpoint.events + (
@@ -1389,8 +1409,10 @@ def command_status(args) -> int:
         "daily_task_id": day,
         "confirmed_likes": daily.confirmed_likes if daily else 0,
         "unique_photographers": len(daily.unique_photographer_ids) if daily else 0,
+        "covered_photographers": len(daily.covered_photographer_ids) if daily else 0,
         "confirmed_comments": daily.confirmed_comments if daily else 0,
-        "remaining_daily_quota": DAILY_TARGET - (daily.confirmed_likes if daily else 0),
+        "remaining_daily_quota": _remaining_photographer_quota(daily),
+        "remaining_photographer_quota": _remaining_photographer_quota(daily),
         "status": daily.status if daily else "not_started",
     }
     _json(

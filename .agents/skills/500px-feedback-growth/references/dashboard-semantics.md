@@ -8,14 +8,14 @@
 - 没有 cycle 日志时，`最近执行` 兼容为不晚于当前时间、且至少有 1 个 `outgoing_like_confirmed` 的最新 `daily_task_id`。
 - 只有 preflight 或 0 次确认点赞的日期不成为回顾基线。
 - 新执行一旦产生确认点赞，立即替换旧基线；顶部、episode 结果和首次观察延迟同步切换到新 cohort。
-- 历史 Tab 只为恰好达到 100 个确认点赞且已封存完成的日期生成。
+- 历史 Tab 为日志状态已封存完成的日期生成；新运行需要覆盖恰好 200 位不同摄影师，旧 100 赞完成任务保持可见。
 
 ## 指标定义
 
 | 指标 | 单位与计算 | 注意事项 |
 |---|---|---|
 | 确认点赞 | 回顾日 `outgoing_like_confirmed` 数 | 必须有页面 `not_liked → liked` 证据 |
-| 覆盖摄影师 | 回顾日不同 `photographer_id` 数 | 与确认点赞不同；verified 第二赞会增加点赞但不增加覆盖 |
+| 覆盖摄影师 | 回顾日点赞与跳过事件中不同 `photographer_id` 的并集 | 新任务以 200 位为完成条件；已点赞或不可读的第一张作品会跳过但仍计入覆盖 |
 | 归因回馈 | `last_touch_at` 位于回顾日且 outcome 为 `success` 的独立 episode 数 | 同一摄影师同一窗口内多幅回赞只计 1 |
 | 观察窗口中 | 同一 cohort 中 outcome 为 `open` 的 episode 数 | 72 小时未结束，不能提前判失败 |
 | 窗口成熟未回馈 | 同一 cohort 中 outcome 为 `failure` 的 episode 数 | 只有完整 episode expiry 到达后才成熟 |
@@ -50,7 +50,7 @@ Episode 结果使用 100% 堆叠条和精确值列表；首次观察延迟使用
 ## 发布前检查
 
 1. 顶部日期是最近执行日，不是 Dashboard 生成日。
-2. 顶部确认点赞与 sealed 日志中的同日事件数一致。
+2. 顶部覆盖数、确认点赞数和评论数与 sealed 日志中的同日事件一致。
 3. Episode 三种结果相加等于该 cohort 的 episode 数。
 4. 成熟 KPI 不包含 `expires_at > now` 的 episode。
 5. 只有 1 个执行日时不得出现折线路径。

@@ -6,7 +6,7 @@
 
 ## 快速入口
 
-- 执行工作流：用户先手动上传/分享，再调用 `$500px-feedback-growth`；它会冻结当前 5 张公开作品、完成 baseline、恢复或开始点赞，并在结束后创建 +20h/+70h 两次只读回顾。
+- 执行工作流：用户先手动上传/分享，再调用 `$500px-feedback-growth`；它会冻结当前 5 张公开作品、完成 baseline、处理 200 位不同摄影师，并在每次确认点赞后评论 `👍👍👍`，结束后创建 +20h/+70h 两次只读回顾。
 - 首次预览后只需回复“确认执行”，无需复制 preview ID。
 - 查看项目规则：阅读 [AGENTS.md](AGENTS.md)。
 - 了解系统边界：阅读 [架构说明](docs/architecture.md)。
@@ -21,10 +21,23 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py doctor
 python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status --json
 ```
 
+Windows 原生 Codex/PowerShell 使用项目启动器（优先 `.venv`，并兼容 Codex 随附 Python）：
+
+```powershell
+.\.agents\skills\500px-feedback-growth\scripts\feedback_growth.cmd doctor
+.\.agents\skills\500px-feedback-growth\scripts\feedback_growth.cmd status --json
+```
+
 重建 Dashboard：
 
 ```bash
 python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py dashboard
+```
+
+Windows：
+
+```powershell
+.\.agents\skills\500px-feedback-growth\scripts\feedback_growth.cmd dashboard
 ```
 
 ## 交给朋友执行
@@ -41,6 +54,13 @@ Git 只同步 sealed 历史。未完成运行的 checkpoint 和一次性 Automat
 
 ```bash
 python3 -m unittest discover -v
+git diff --check
+```
+
+Windows 本地部署后使用：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -v
 git diff --check
 ```
 

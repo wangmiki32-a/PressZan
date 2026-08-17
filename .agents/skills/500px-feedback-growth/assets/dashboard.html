@@ -508,6 +508,10 @@
       .chart-key { margin-top: 18px; }
       .trend-frame { margin-right: -14px; }
       .bar-chart { gap: 24px; padding-inline: 24px; }
+      .cycle-strip { grid-template-columns: 1fr; }
+      .cycle-cell { border-right: 0; border-bottom: 1px solid var(--line); }
+      .cycle-cell:last-child { border-bottom: 0; }
+      .cycle-work { grid-template-columns: 36px minmax(0, 1fr) 58px 58px; gap: 8px; }
       .analysis-grid { display: block; }
       .analysis-block { padding: 36px 0; border-bottom: 1px solid var(--line); }
       .analysis-block:nth-last-child(-n+2) { border-bottom: 1px solid var(--line); }
@@ -528,10 +532,6 @@
       .side-metric dd { font-size: 36px; }
       .quota { gap: 3px; }
       .history-summary { grid-template-columns: 1fr; }
-      .cycle-strip { grid-template-columns: 1fr; }
-      .cycle-cell { border-right: 0; border-bottom: 1px solid var(--line); }
-      .cycle-cell:last-child { border-bottom: 0; }
-      .cycle-work { grid-template-columns: 36px minmax(100px, 1fr) 70px 70px; gap: 8px; }
       .history-metric { border-right: 0; border-bottom: 1px solid var(--line); }
       .history-metric:last-child { border-bottom: 0; }
     }
@@ -551,13 +551,13 @@
           <p class="section-kicker" id="today-title">最近执行</p>
           <div class="today-core">
             <div class="today-number" id="today-likes">0</div>
-            <div class="today-goal"><strong>/ 100</strong><span id="today-copy">尚未开始</span></div>
+            <div class="today-goal"><strong id="today-goal">/ 200 位</strong><span id="today-copy">尚未开始</span></div>
           </div>
           <div class="quota" id="quota" role="img" aria-label="今日点赞完成度"></div>
         </div>
         <dl class="overview-side">
           <div class="state-line"><dt class="section-kicker">当前状态</dt><dd class="state-label" id="state" aria-live="polite"></dd></div>
-          <div class="side-metric"><dt>覆盖摄影师</dt><dd id="unique">0</dd><small>目标至少 80 位</small></div>
+          <div class="side-metric"><dt>确认点赞</dt><dd id="unique">0</dd><small>本次实际结果</small></div>
           <div class="side-metric"><dt>30 天独立回馈率</dt><dd id="kpi">待成熟</dd><small id="kpi-detail">成熟窗口 0 / 0</small></div>
           <div class="side-metric"><dt>Verified 群体</dt><dd id="verified">0</dd><small>滚动 30 天验证</small></div>
         </dl>
@@ -618,7 +618,7 @@
       <section class="section" aria-labelledby="history-title">
         <div class="section-head stacked">
           <h2 id="history-title">已完成的每日任务</h2>
-          <p class="section-note">只有达到 100 个确认点赞的日期会进入历史。</p>
+          <p class="section-note">新任务覆盖 200 位摄影师后进入历史；旧完成任务保持可见。</p>
         </div>
         <div id="history" aria-live="polite"></div>
       </section>
@@ -646,18 +646,21 @@
     const generated = new Date(data.generated_at);
     document.getElementById("generated").textContent = `更新于 ${Number.isNaN(generated.getTime()) ? data.generated_at : generated.toLocaleString("zh-CN", { hour12: false })}`;
     document.getElementById("today-title").textContent = `最近执行 · ${current.daily_task_id}`;
-    document.getElementById("today-likes").textContent = current.confirmed_likes;
-    document.getElementById("today-copy").textContent = current.confirmed_likes >= 100 ? "该次执行已完成" : (current.confirmed_likes > 0 ? `该次仍差 ${Math.max(0, 100 - current.confirmed_likes)} 次确认点赞` : "尚无执行记录");
-    document.getElementById("unique").textContent = current.unique_photographers;
+    const usesCoverageContract = current.coverage_target === 200;
+    const primaryProgress = usesCoverageContract ? current.covered_photographers : current.confirmed_likes;
+    document.getElementById("today-likes").textContent = primaryProgress;
+    document.getElementById("today-goal").textContent = usesCoverageContract ? "/ 200 位" : "/ 100 赞";
+    document.getElementById("today-copy").textContent = current.status === "completed" ? "该次执行已完成" : (primaryProgress > 0 ? (usesCoverageContract ? `该次仍差 ${Math.max(0, 200 - primaryProgress)} 位摄影师` : `该次仍差 ${Math.max(0, 100 - primaryProgress)} 次确认点赞`) : "尚无执行记录");
+    document.getElementById("unique").textContent = current.confirmed_likes;
     document.getElementById("kpi").textContent = percent(data.kpi.value);
     document.getElementById("kpi-detail").textContent = `成熟窗口 ${data.kpi.numerator} / ${data.kpi.denominator}`;
     document.getElementById("verified").textContent = data.verified_count;
     document.getElementById("state").textContent = current.pause_reason ? `暂停：${current.pause_reason}` : (stateNames[current.status] || current.status);
 
     const quotaCount = 20;
-    const activeQuota = Math.ceil(clamp(current.confirmed_likes) / 5);
+    const activeQuota = Math.ceil(Math.max(0, Math.min(usesCoverageContract ? 200 : 100, Number(primaryProgress) || 0)) / (usesCoverageContract ? 10 : 5));
     const quota = document.getElementById("quota");
-    quota.setAttribute("aria-label", `${current.daily_task_id} 已确认 ${current.confirmed_likes} / 100 次点赞`);
+    quota.setAttribute("aria-label", usesCoverageContract ? `${current.daily_task_id} 已覆盖 ${current.covered_photographers} / 200 位摄影师` : `${current.daily_task_id} 已确认 ${current.confirmed_likes} / 100 次点赞（历史合同）`);
     quota.innerHTML = Array.from({ length: quotaCount }, (_, index) => `<i class="quota-cell${index < activeQuota ? " active" : ""}" aria-hidden="true"></i>`).join("");
 
     const themeToggle = document.getElementById("theme-toggle");
@@ -739,7 +742,7 @@
     };
     const history = document.getElementById("history");
     if (!data.history_tabs.length) {
-      history.innerHTML = `<div class="empty">当日达到 100 个确认点赞后，历史记录才会出现在这里。</div>`;
+      history.innerHTML = `<div class="empty">当日覆盖 200 位摄影师后，历史记录才会出现在这里。</div>`;
     } else {
       history.innerHTML = `<div class="tabs" role="tablist" aria-label="历史日期">${data.history_tabs.map((item, index) => `<button type="button" class="tab" role="tab" id="history-tab-${index}" aria-controls="history-panel" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}" data-index="${index}">${esc(item.daily_task_id)}</button>`).join("")}</div><div id="history-panel" role="tabpanel" aria-labelledby="history-tab-0"></div>`;
       const buttons = Array.from(history.querySelectorAll('[role="tab"]'));
@@ -747,7 +750,7 @@
         const item = data.history_tabs[index];
         const panel = document.getElementById("history-panel");
         panel.setAttribute("aria-labelledby", `history-tab-${index}`);
-        panel.innerHTML = `<div class="history-summary"><div class="history-metric"><span>覆盖摄影师</span><strong>${item.unique_photographers}</strong></div><div class="history-metric"><span>强化点赞</span><strong>${item.reinforcement_likes}</strong></div><div class="history-metric"><span>确认评论</span><strong>${item.confirmed_comments}</strong></div><div class="history-metric"><span>归因回馈者</span><strong>${item.attributed_reciprocators}</strong></div></div><dl class="history-details"><div><dt>完成时间</dt><dd>${esc(item.completed_at)}</dd></div><div><dt>配额</dt><dd>${esc(readableObject(item.quota_counts))}</dd></div><div><dt>跳过原因</dt><dd>${esc(readableObject(item.skip_counts))}</dd></div><div><dt>风险事件</dt><dd>${esc(readableObject(item.risk_events))}</dd></div></dl>`;
+        panel.innerHTML = `<div class="history-summary"><div class="history-metric"><span>覆盖摄影师</span><strong>${item.covered_photographers}</strong></div><div class="history-metric"><span>确认点赞</span><strong>${item.confirmed_likes}</strong></div><div class="history-metric"><span>确认评论</span><strong>${item.confirmed_comments}</strong></div><div class="history-metric"><span>归因回馈者</span><strong>${item.attributed_reciprocators}</strong></div></div><dl class="history-details"><div><dt>完成时间</dt><dd>${esc(item.completed_at)}</dd></div><div><dt>配额</dt><dd>${esc(readableObject(item.quota_counts))}</dd></div><div><dt>跳过原因</dt><dd>${esc(readableObject(item.skip_counts))}</dd></div><div><dt>风险事件</dt><dd>${esc(readableObject(item.risk_events))}</dd></div></dl>`;
       };
       const selectTab = index => {
         buttons.forEach((button, buttonIndex) => {

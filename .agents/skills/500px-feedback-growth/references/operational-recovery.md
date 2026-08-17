@@ -34,11 +34,11 @@
 
 ## 连续日任务恢复
 
-- 正常运行不按固定动作数切分；一个 run 持续到当日累计 100。
+- 正常运行不按固定动作数切分；一个 run 持续到当日恰好覆盖 200 位不同摄影师。
 - 每个确认动作已经独立 checkpoint，因此中断时恢复同一 `run_id`，不需要从头重放候选。
 - Sealed 后 retained checkpoint 只作审计证据；CLI 拒绝继续 append 或 resume。
 - 浏览器连接丢失但未出现安全警告时保留 active checkpoint；重新连接后先读 `resume` 输出和页面当前状态。
-- 只有确认达到 100、安全暂停或候选耗尽时才封存 run。未知中断不得伪写 `completed`。
+- 只有确认覆盖 200 位不同摄影师、安全暂停或候选耗尽时才封存 run。未知中断不得伪写 `completed`。
 - 跨日 active run 是例外：旧日额度不结转，`resume`/`event` 返回 `daily_task_expired`，需封存旧日未完成状态后再开始新日。
 
 ## 跨机器恢复边界

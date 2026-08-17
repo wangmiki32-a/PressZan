@@ -27,17 +27,26 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py doctor
 python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py status --json
 ```
 
+Windows 原生 Codex 使用同参数的启动器：
+
+```powershell
+.\.agents\skills\500px-feedback-growth\scripts\feedback_growth.cmd doctor
+.\.agents\skills\500px-feedback-growth\scripts\feedback_growth.cmd status --json
+```
+
+启动器优先使用仓库 `.venv`，其次使用 Codex 随附 Python，再回退到系统 `py`、`python3` 或 `python`；解释器切换不改变状态根、日志和业务语义。
+
 `doctor` 必须先通过。它只读验证路径、sealed logs、聚合证据和 Git 边界；不读取 Chrome 凭证、不访问 500px、不修改日志。
 
 根据结果处理：
 
 | 状态 | 动作 |
 |---|---|
-| `daily_complete` 或 `confirmed_likes=100` | 当日停止，不创建第 101 个动作 |
+| `daily_complete` 或 `covered_photographers=200` | 当日停止，不处理第 201 位摄影师 |
 | 存在 recoverable run | 使用 `resume --run-id <run_id>`，从最后确认事件继续 |
 | `paused_reason` 非空 | 保留断点，人工确认页面和账号已恢复后再继续 |
 | 首次尚未批准 | 完整执行只读 preflight，展示摘要并询问“确认执行？” |
-| 今日有剩余额度且无 active run | 开始一个连续 run，执行到当日累计 100 |
+| 今日有剩余覆盖且无 active run | 开始一个连续 run，执行到恰好 200 位不同摄影师 |
 
 ## 标准日任务
 
@@ -66,12 +75,13 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 
 ### 点赞执行
 
-1. 打开候选主页，检查最近 12 幅作品。
-2. 选择第一幅可见且未点赞的作品。
+1. 打开候选主页，只检查当前第一张作品，不扫描其余作品。
+2. 第一张已点赞或不可读时记录 `candidate_skipped` 并计入覆盖；未点赞时进入点赞流程。
 3. 读取 `before_state=not_liked`，点击一次，再读取 `after_state=liked`。
 4. 页面确认成功后立即追加事件；失败或不明确时不得重复点击。
-5. 从当前作品评论区选择下一位未访问候选，链路不足时从本地高分队列重新播种。
-6. 同一个 run 持续执行当天剩余额度；达到当日累计 100 后封存，并重建 status 和 Dashboard。
+5. 每次确认点赞后在同一作品评论 `👍👍👍`；同文本本人评论已可见时不重复，新增评论只有可见后才记录。
+6. 从当前作品评论区选择下一位当日尚未覆盖的候选，链路不足时从本地高分队列重新播种。
+7. 同一个 run 持续执行当天剩余覆盖；恰好处理 200 位不同摄影师后封存，并重建 status 和 Dashboard。确认点赞数可以少于 200。
 
 ### 自动回顾
 
@@ -97,8 +107,8 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 | 批准时 `preview_changed` | 完整复扫引入页面变化，或批准内容确实变化 | 封存旧 approval run；新鲜 preview 只复核已批准候选，不能伪造旧顺序 |
 | 点赞数字可见但弹层条目为 0 | 异步加载或首次展开失败 | 只刷新读取一次；仍为空记录 `liker_list_unavailable` |
 | 评论区首次为 0，但页面历史上有评论 | 异步加载或点赞弹层遮挡 | 关闭弹层或重新导航，只刷新一次；先读候选再开点赞弹层 |
-| 候选主页作品不可读 | 页面临时不可用，不能确认未点赞作品 | 记录 `candidate_skipped: profile_works_unavailable`，不消耗额度 |
-| 12 幅作品均已点赞 | 当前候选暂时耗尽 | 记录 `all_recent_works_liked`，转下一位，不消耗额度 |
+| 候选主页第一张作品不可读 | 页面临时不可用 | 记录 `candidate_skipped: latest_work_unavailable`，计入覆盖后转下一位 |
+| 第一张作品已经点赞 | 当前候选无需重复点赞 | 记录 `candidate_skipped: latest_work_already_liked`，计入覆盖后转下一位 |
 | checkpoint 写入旧 run | 临时命令或脚本复用了旧 ID | 每次写入前核对当前 `run_id`、`scan_id` 和绝对 `state-root`；写后检查返回值 |
 | Chrome 有进程但无法连接 | 没有可接管窗口或扩展通信未建立 | 保留 runtime，打开一个 Chrome 窗口后最多重连一次 |
 | 导航后调用不存在的等待 API | 使用了包装层不支持的方法 | `goto()` 后用可见 DOM 条件读取，不调用不存在的等待方法 |
@@ -124,8 +134,8 @@ Preflight 只读：扫描最近 30 幅本人作品、点赞来源和候选评论
 
 ## 任务结束检查
 
-1. 达到 100、安全暂停或候选耗尽时，当前 run 已按真实状态封存；普通可恢复中断保留 active checkpoint。
-2. `status --json` 的当日数量与页面确认事件一致。
+1. 覆盖 200 位不同摄影师、安全暂停或候选耗尽时，当前 run 已按真实状态封存；普通可恢复中断保留 active checkpoint。
+2. `status --json` 的覆盖数、确认点赞数和评论数与页面确认事件一致。
 3. Dashboard 已从日志重建，而不是手工修改。
 4. 没有 active checkpoint 遗留；若必须中断，已明确保留 recoverable run。
 5. Dashboard 的“最近执行”、互斥 episode 结果和成熟 KPI 符合 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。

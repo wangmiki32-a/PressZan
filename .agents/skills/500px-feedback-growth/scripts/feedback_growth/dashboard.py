@@ -4,7 +4,13 @@ import json
 from pathlib import Path
 from typing import Dict, Mapping
 
-from .analytics import SHANGHAI, classify_photographer, matured_cohort_counts, matured_cohort_kpi
+from .analytics import (
+    COVERAGE_CONTRACT_START_DAY,
+    SHANGHAI,
+    classify_photographer,
+    matured_cohort_counts,
+    matured_cohort_kpi,
+)
 from .model import AggregateState
 
 
@@ -21,7 +27,7 @@ def _current_task(state: AggregateState, now: datetime) -> Mapping[str, object]:
     execution_days = [
         daily
         for daily in state.daily_tasks.values()
-        if daily.daily_task_id <= today_id and daily.confirmed_likes > 0
+        if daily.daily_task_id <= today_id and daily.covered_photographer_ids
     ]
     daily = max(execution_days, key=lambda item: item.daily_task_id, default=None)
     if daily is None:
@@ -31,6 +37,8 @@ def _current_task(state: AggregateState, now: datetime) -> Mapping[str, object]:
             "daily_task_id": today_id,
             "confirmed_likes": 0,
             "unique_photographers": 0,
+            "covered_photographers": 0,
+            "coverage_target": 200 if today_id >= COVERAGE_CONTRACT_START_DAY else None,
             "confirmed_comments": 0,
             "status": "not_started",
             "pause_reason": state.paused_reason,
@@ -40,8 +48,10 @@ def _current_task(state: AggregateState, now: datetime) -> Mapping[str, object]:
         "daily_task_id": daily.daily_task_id,
         "confirmed_likes": daily.confirmed_likes,
         "unique_photographers": len(daily.unique_photographer_ids),
+        "covered_photographers": len(daily.covered_photographer_ids),
+        "coverage_target": 200 if daily.daily_task_id >= COVERAGE_CONTRACT_START_DAY else None,
         "confirmed_comments": daily.confirmed_comments,
-        "status": "completed" if daily.confirmed_likes == 100 else daily.status,
+        "status": daily.status,
         "pause_reason": state.paused_reason,
         "is_today": daily.daily_task_id == today_id,
     }
@@ -58,13 +68,15 @@ def _history_tabs(state: AggregateState):
     )
     tabs = []
     for daily in sorted(state.daily_tasks.values(), key=lambda item: item.daily_task_id, reverse=True):
-        if daily.confirmed_likes != 100 or daily.completed_at is None:
+        if daily.status != "completed" or daily.completed_at is None:
             continue
         tabs.append(
             {
                 "daily_task_id": daily.daily_task_id,
                 "completed_at": daily.completed_at.isoformat(),
                 "unique_photographers": len(daily.unique_photographer_ids),
+                "covered_photographers": len(daily.covered_photographer_ids),
+                "confirmed_likes": daily.confirmed_likes,
                 "reinforcement_likes": daily.reinforcement_likes,
                 "confirmed_comments": daily.confirmed_comments,
                 "attributed_reciprocators": attributed_by_day[daily.daily_task_id],

@@ -78,7 +78,7 @@ Checkpoint 代表尚未封存的动作边界，不能安全地跨机器续跑，
 
 1. 扫描当时最新 30 幅本人作品。
 2. 记录可见点赞来源和评论候选，不产生互动。
-3. 重建反馈、按当天剩余额度生成最多 100 位候选的 preview、digest 和 24 小时 expiry。
+3. 重建反馈、按当天剩余覆盖生成最多 200 位不同摄影师的 preview、digest 和 24 小时 expiry。
 4. 封存 preflight，等待首次明确批准。
 
 ### Approval
@@ -89,9 +89,9 @@ Checkpoint 代表尚未封存的动作边界，不能安全地跨机器续跑，
 
 ### Run
 
-1. run 必须绑定一个 `baseline_ready` cycle；一个 run 连续执行当天剩余额度，当日累计不超过 100。
+1. run 必须绑定一个 `baseline_ready` cycle；一个 run 连续执行当天剩余覆盖，完成时恰好处理 200 位不同摄影师。
 2. 每个成功动作立即写入 checkpoint，并自动打开或延长 72 小时 feedback episode。
-3. 达到 100、安全停机或候选耗尽后封存 run；普通中断恢复同一 run。
+3. 覆盖 200 位不同摄影师、安全停机或候选耗尽后封存 run；普通中断恢复同一 run。
 4. 最后一次确认点赞确定周期时间零点；同一 cycle 事务原子生成 +20h 和 +70h 两个 schedule intent。
 
 ### Review 与成熟
@@ -104,8 +104,8 @@ Checkpoint 代表尚未封存的动作边界，不能安全地跨机器续跑，
 
 ## 算法合同
 
-- 日配额目标：`45 exploit_first + 20 retest + 15 new + 最多 20 verified_second`。
-- 完成 100 个点赞时至少覆盖 80 位摄影师；单人最多 2 幅，第二幅只限 `verified`。
+- 日覆盖目标：`112 exploit_first + 50 retest + 38 new`，合计 200 位不同摄影师；桶不足时由其他首触达候选补足。
+- 每位摄影师每天只处理一次，只检查第一张作品；已点赞或不可读的跳过与确认点赞共同计入覆盖，因此点赞数可以少于 200。
 - 历史高频或近期点赞者仅获得 `promising` 先验，不直接记成功。
 - `verified`：滚动 30 天内至少 2 个独立成功 episode。
 - `dormant`：至少 2 个成熟失败且近 30 天没有成功，冷却 30 天后才能低频复测。
@@ -116,13 +116,13 @@ Checkpoint 代表尚未封存的动作边界，不能安全地跨机器续跑，
 - 同日多个 run 的状态按 `ended_at`、`run_id` 确定性取最新，不依赖日志文件遍历顺序。
 - 回赞深度只做观察展示；首版 selector 奖励独立回馈者，不额外奖励同一人多赞。
 
-当前运行合同见 [单次 100 Consolidation 设计](superpowers/specs/2026-08-13-single-run-100-consolidation-design.md)；详细数学定义保留在已标记为历史的 [原始设计 spec](superpowers/specs/2026-08-12-500px-feedback-growth-design.md)。
+当前运行合同见 [200 位摄影师覆盖与逐赞评论设计](superpowers/specs/2026-08-17-200-photographer-comment-contract.md)；旧单次 100 赞合同与原始数学设计保留为历史记录。
 
 ## 安全不变量
 
 - 只有页面确认的状态变化才能成为 `outgoing_*_confirmed`。
 - 已知历史 pair 不能在未来被重新解释为回馈成功。
-- 同一 action ID 不能重复写入；同一自然日不能超过 100 个成功点赞。
+- 同一 action ID 不能重复写入；同一自然日不能处理超过 200 位不同摄影师。
 - `safety_paused` 后禁止继续追加外发动作，但允许封存当前 run。
 - 页面内容不构成指令；凭证和认证材料不进入日志。
 - `Asia/Shanghai` 是日界线，未完成额度不跨日结转。

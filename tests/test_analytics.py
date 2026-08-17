@@ -43,6 +43,46 @@ def failed(event_time, episode, expires_at):
 
 
 class AnalyticsTest(unittest.TestCase):
+    def test_daily_coverage_unions_confirmed_likes_and_skips_by_photographer(self):
+        touched_at = NOW - timedelta(hours=1)
+        episode = episode_id("p1", "a1")
+        events = [
+            confirmed_like("a1", "p1", touched_at),
+            opened(episode, "p1", "a1", touched_at, touched_at + timedelta(hours=72)),
+            event("candidate_skipped", touched_at + timedelta(minutes=1), photographer_id="p2", reason="already_liked"),
+            event("candidate_skipped", touched_at + timedelta(minutes=2), photographer_id="p1", reason="already_liked"),
+        ]
+
+        state = rebuild_state([run(events, status="active")], NOW)
+
+        daily = state.daily_tasks["2026-08-12"]
+        self.assertEqual(daily.covered_photographer_ids, frozenset({"p1", "p2"}))
+        self.assertEqual(daily.confirmed_likes, 1)
+
+    def test_future_100_like_day_is_not_complete_before_200_photographers(self):
+        started = dt(18, 1)
+        events = []
+        for index in range(100):
+            occurred_at = started + timedelta(seconds=index)
+            photographer_id = f"p{index:03}"
+            action_id = f"a{index:03}"
+            episode = episode_id(photographer_id, action_id)
+            events.extend(
+                (
+                    confirmed_like(action_id, photographer_id, occurred_at),
+                    opened(episode, photographer_id, action_id, occurred_at, occurred_at + timedelta(hours=72)),
+                )
+            )
+
+        state = rebuild_state(
+            [run(events, day="2026-08-18", status="in_progress")],
+            dt(18, 12),
+        )
+
+        daily = state.daily_tasks["2026-08-18"]
+        self.assertEqual(daily.status, "in_progress")
+        self.assertEqual(len(daily.covered_photographer_ids), 100)
+
     def test_second_touch_extends_same_episode(self):
         t0 = NOW - timedelta(days=10)
         ep = episode_id("p1", "a1")

@@ -8,9 +8,10 @@ from .analytics import beta_parameters
 from .model import AggregateState, Candidate, SelectionResult
 
 
-DAILY_TARGET = 100
-MIN_UNIQUE = 80
-QUOTAS = {"exploit_first": 45, "retest": 20, "new": 15, "verified_second": 20}
+DAILY_PHOTOGRAPHER_TARGET = 200
+DAILY_TARGET = DAILY_PHOTOGRAPHER_TARGET
+MIN_UNIQUE = DAILY_PHOTOGRAPHER_TARGET
+QUOTAS = {"exploit_first": 112, "retest": 50, "new": 38}
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -46,7 +47,6 @@ def _selection(candidate: Candidate, bucket: str, score: float, ordinal: int) ->
         "exploit_first": "利用已验证或高潜关系",
         "retest": "复测已有失败或冷却结束关系",
         "new": "探索新摄影师",
-        "verified_second": "强化已验证回馈关系",
     }[bucket]
     return {
         "photographer_id": candidate.photographer_id,
@@ -72,13 +72,10 @@ def select_run_candidates(
 ) -> SelectionResult:
     day = _today(now)
     daily = state.daily_tasks.get(day)
-    existing_total = daily.confirmed_likes if daily else 0
+    existing_ids = set(getattr(daily, "covered_photographer_ids", ()) if daily else ())
+    existing_total = len(existing_ids)
     existing_quota = Counter(daily.quota_counts if daily else {})
-    existing_ids = set(daily.unique_photographer_ids if daily else ())
-    existing_per_photographer = Counter()
-    for touch in state.outgoing_touches:
-        if _today(touch.occurred_at) == day:
-            existing_per_photographer[touch.photographer_id] += 1
+    existing_per_photographer = Counter({identifier: 1 for identifier in existing_ids})
 
     remaining_daily = max(0, DAILY_TARGET - existing_total)
     requested = min(max(0, limit), remaining_daily)
@@ -87,7 +84,7 @@ def select_run_candidates(
 
     unique_candidates: Dict[str, Candidate] = {}
     for candidate in candidates:
-        if existing_per_photographer[candidate.photographer_id] >= 2:
+        if existing_per_photographer[candidate.photographer_id] >= 1:
             continue
         current = unique_candidates.get(candidate.photographer_id)
         if current is None or candidate.page_order < current.page_order:
@@ -111,10 +108,7 @@ def select_run_candidates(
             if len(selected) >= requested or count <= 0:
                 break
             identifier = candidate.photographer_id
-            if bucket == "verified_second":
-                if candidate.tier != "verified" or selected_counts[identifier] != 1:
-                    continue
-            elif selected_counts[identifier] != 0:
+            if selected_counts[identifier] != 0:
                 continue
             selected_counts[identifier] += 1
             selected_ids.add(identifier)
@@ -130,10 +124,6 @@ def select_run_candidates(
         deficit = max(0, QUOTAS[bucket] - existing_quota[bucket])
         add_from(pools[bucket], bucket, deficit)
 
-    verified = [candidate for candidate in unique_candidates.values() if candidate.tier == "verified"]
-    second_deficit = max(0, QUOTAS["verified_second"] - existing_quota["verified_second"])
-    add_from(verified, "verified_second", second_deficit)
-
     if len(selected) < requested:
         unselected_first = [
             candidate
@@ -146,9 +136,6 @@ def select_run_candidates(
                 bucket,
                 requested - len(selected),
             )
-
-    if len(selected) < requested:
-        add_from(verified, "verified_second", requested - len(selected))
 
     projected_total = existing_total + len(selected)
     remaining_after = max(0, DAILY_TARGET - projected_total)

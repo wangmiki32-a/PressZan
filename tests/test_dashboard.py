@@ -31,7 +31,8 @@ TEMPLATE = (
 )
 
 
-def daily(day, likes, unique, *, completed_at=None, comments=0):
+def daily(day, likes, unique, *, completed_at=None, comments=0, covered=None):
+    covered = unique if covered is None else covered
     return DailyTaskStats(
         daily_task_id=day,
         confirmed_likes=likes,
@@ -43,6 +44,7 @@ def daily(day, likes, unique, *, completed_at=None, comments=0):
         reinforcement_likes=max(0, likes - unique),
         skip_counts={"all_recent_works_liked": 2} if completed_at else {},
         risk_events=({"reason": "rate_limit", "evidence_summary": "slow down"},) if completed_at else (),
+        covered_photographer_ids=frozenset(f"covered-{index}" for index in range(covered)),
     )
 
 
@@ -217,14 +219,15 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(history["attributed_reciprocators"], 1)
         self.assertNotIn("tier_changes", history)
 
-    def test_only_exactly_100_likes_creates_complete_history_tab(self):
+    def test_legacy_completed_100_like_task_remains_in_history(self):
         complete = daily("2026-08-11", 100, 84, completed_at=dt(11, 15), comments=3)
-        over_limit = daily("2026-08-10", 101, 85, completed_at=dt(10, 15))
+        over_limit = daily("2026-08-10", 101, 85)
         state = state_with_tasks(complete, over_limit)
 
         view = build_dashboard_view_model(state, dt(12, 12))
 
         self.assertEqual(len(view["history_tabs"]), 1)
+        self.assertIsNone(view["current_task"]["coverage_target"])
         tab = view["history_tabs"][0]
         self.assertEqual(tab["daily_task_id"], "2026-08-11")
         self.assertEqual(tab["completed_at"], dt(11, 15).isoformat())
@@ -236,6 +239,18 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(tab["quota_counts"]["exploit_first"], 84)
         self.assertEqual(tab["skip_counts"]["all_recent_works_liked"], 2)
         self.assertEqual(tab["risk_events"][0]["reason"], "rate_limit")
+
+    def test_200_covered_photographers_complete_with_fewer_likes(self):
+        complete = daily("2026-08-18", 150, 150, covered=200, completed_at=dt(18, 15), comments=150)
+
+        view = build_dashboard_view_model(state_with_tasks(complete), dt(18, 16))
+
+        self.assertEqual(view["current_task"]["covered_photographers"], 200)
+        self.assertEqual(view["current_task"]["coverage_target"], 200)
+        self.assertEqual(view["current_task"]["confirmed_likes"], 150)
+        self.assertEqual(view["current_task"]["status"], "completed")
+        self.assertEqual(view["history_tabs"][0]["covered_photographers"], 200)
+        self.assertEqual(view["history_tabs"][0]["confirmed_likes"], 150)
 
     def test_kpi_matches_analytics(self):
         now = dt(12, 12)

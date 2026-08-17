@@ -70,6 +70,8 @@
 
 - `before_state` / `after_state` 必须来自同一可见控件的前后读取。
 - `quota_bucket` 仅用 `exploit_first`、`retest`、`new`、`verified_second`。
+- 新运行的摄影师覆盖由 `outgoing_like_confirmed` 与 `candidate_skipped` 中不同 `photographer_id` 的并集重建；同一摄影师每天只计一次，恰好 200 位才完成。历史日志中的 `verified_second` 继续可读，新运行不再生成该桶。
+- 新运行每次确认点赞后使用 `outgoing_comment_confirmed` 记录可见的固定评论 `👍👍👍`；历史评论内容保持原样，不补写、不迁移。
 - `safety_paused.reason` 使用可搜索值：`captcha`、`rate_limit`、`login_lost`、`platform_warning`、`account_mismatch`、`ambiguous_state`。
 - `scan_issue.reason` 用于一次刷新后仍无法读取的只读页面：例如 `liker_list_unavailable`；它不代表账号被安全暂停。
 - 日志不得包含密码、Cookie、token、local storage、私信正文或无关个人资料。

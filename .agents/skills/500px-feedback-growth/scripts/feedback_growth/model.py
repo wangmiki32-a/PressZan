@@ -135,6 +135,7 @@ class DailyTaskStats:
     reinforcement_likes: int
     skip_counts: Mapping[str, int]
     risk_events: Tuple[Mapping[str, str], ...]
+    covered_photographer_ids: FrozenSet[str] = frozenset()
 
 
 @dataclass(frozen=True)

@@ -1,14 +1,16 @@
 from datetime import datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 
 from tests import bootstrap  # noqa: F401
 from feedback_growth.model import Event, RunLog
-from feedback_growth.store import read_checkpoint, seal_run
+from feedback_growth.store import append_checkpoint_events, read_checkpoint, seal_run
 from tests.helpers import confirmed_like, dt, opened
 
 
@@ -23,9 +25,13 @@ SCRIPT = (
 
 
 def invoke(root, *args):
+    environment = os.environ.copy()
+    environment["PYTHONUTF8"] = "1"
     result = subprocess.run(
-        ["python3", str(SCRIPT), *args, "--state-root", str(root)],
+        [sys.executable, str(SCRIPT), *args, "--state-root", str(root)],
+        env=environment,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
     )
@@ -34,11 +40,14 @@ def invoke(root, *args):
 
 
 def invoke_without_state_root(*args, cwd=None, environ=None):
+    environment = (environ or os.environ).copy()
+    environment["PYTHONUTF8"] = "1"
     result = subprocess.run(
-        ["python3", str(SCRIPT), *args],
+        [sys.executable, str(SCRIPT), *args],
         cwd=cwd,
-        env=environ,
+        env=environment,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
     )
@@ -104,16 +113,18 @@ def seed_approved_likes(root, count, base_time, daily_task_id, *, offset=0, run_
         events.append(confirmed_like(identifier, photographer_id, occurred_at, bucket="new", photo_id=photo_id))
         events.append(opened(hashlib.sha256(f"episode:{photographer_id}:{identifier}".encode()).hexdigest(), photographer_id, identifier, occurred_at, occurred_at + timedelta(hours=72)))
     ended = base_time + timedelta(seconds=count + 1)
+    completed = count + offset >= 100
+    terminal_status = "completed" if completed else "in_progress"
     events.append(
         Event(
             "run_finished",
             ended,
-            {"status": "completed", "confirmed_like_count": count, "confirmed_comment_count": 0},
+            {"status": terminal_status, "confirmed_like_count": count, "confirmed_comment_count": 0},
         )
     )
     seal_run(
         root,
-        RunLog(1, run_id or f"seed-{count}-{offset}", daily_task_id, "run", "completed", base_time, ended, tuple(events)),
+        RunLog(1, run_id or f"seed-{count}-{offset}", daily_task_id, "run", terminal_status, base_time, ended, tuple(events)),
     )
 
 
@@ -168,7 +179,7 @@ class CliTest(unittest.TestCase):
         report = payload
         self.assertTrue(Path(report["state_root"]).is_absolute())
         self.assertGreater(report["sealed_run_count"], 0)
-        self.assertEqual(report["eligible_outcomes"], {"failure": 58, "open": 0, "success": 42})
+        self.assertEqual(report["eligible_outcomes"], {"failure": 58, "open": 100, "success": 42})
         self.assertTrue(report["git"]["all_sealed_runs_tracked"])
         self.assertTrue(report["git"]["local_only_paths_ignored"])
 
@@ -506,11 +517,11 @@ class CliTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertEqual(payload["code"], "cycle_id_required")
 
-    def test_preview_plans_full_daily_target(self):
+    def test_preview_plans_full_200_photographer_target(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             _, begun = invoke(root, "begin", "--mode", "preflight", "--now", "2026-08-12T09:00:00+00:00")
-            for index in range(100):
+            for index in range(200):
                 add_candidate(root, begun["run_id"], identifier=f"n{index:03}", page_order=index + 1)
 
             result, preview = invoke(
@@ -525,15 +536,16 @@ class CliTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(len(preview["candidate_plan"]), 100)
+            self.assertEqual(len(preview["candidate_plan"]), 200)
             self.assertEqual(preview["quota_snapshot"]["confirmed_likes"], 0)
+            self.assertEqual(preview["quota_snapshot"]["covered_photographers"], [])
 
-    def test_preview_plans_only_remaining_63_after_37_likes(self):
+    def test_preview_plans_only_remaining_163_after_37_covered_photographers(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             seed_approved_likes(root, 37, dt(12, 8), "2026-08-12")
             _, begun = invoke(root, "begin", "--mode", "preflight", "--now", "2026-08-12T09:00:00+00:00")
-            for index in range(100):
+            for index in range(200):
                 add_candidate(root, begun["run_id"], identifier=f"q{index:03}", page_order=index + 1)
 
             result, preview = invoke(
@@ -548,8 +560,9 @@ class CliTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(len(preview["candidate_plan"]), 63)
+            self.assertEqual(len(preview["candidate_plan"]), 163)
             self.assertEqual(preview["quota_snapshot"]["confirmed_likes"], 37)
+            self.assertEqual(len(preview["quota_snapshot"]["covered_photographers"]), 37)
 
     def test_latest_preview_returns_current_valid_preview(self):
         with TemporaryDirectory() as directory:
@@ -572,44 +585,47 @@ class CliTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertEqual(payload["code"], "preview_not_current_day")
 
-    def test_one_run_can_record_all_100_likes(self):
+    def test_one_run_completes_with_200_covered_photographers_and_fewer_likes(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             seed_approved_likes(root, 0, dt(12, 8), "2026-08-12")
             result, begun = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T09:00:00+00:00")
             self.assertEqual(result.returncode, 0, result.stderr)
+            touched_at = datetime.fromisoformat("2026-08-12T09:00:01+00:00")
+            photographer_id = "r000"
+            photo_id = "run-photo-000"
+            action_id = deterministic_action_id("2026-08-12", photographer_id, photo_id, "outgoing_like_confirmed")
+            episode = hashlib.sha256(f"episode:{photographer_id}:{action_id}".encode()).hexdigest()
+            events = [
+                confirmed_like(action_id, photographer_id, touched_at, bucket="new", photo_id=photo_id),
+                opened(episode, photographer_id, action_id, touched_at, touched_at + timedelta(hours=72)),
+            ]
+            events.extend(
+                Event(
+                    "candidate_skipped",
+                    touched_at + timedelta(seconds=index),
+                    {"photographer_id": f"r{index:03}", "reason": "already_liked"},
+                )
+                for index in range(1, 200)
+            )
+            append_checkpoint_events(root, begun["run_id"], events)
 
-            for index in range(100):
-                photographer_id = f"r{index:03}"
-                photo_id = f"run-photo-{index:03}"
-                action_id = deterministic_action_id(
-                    "2026-08-12", photographer_id, photo_id, "outgoing_like_confirmed"
-                )
-                result, payload = invoke(
-                    root,
-                    "event",
-                    "--run-id",
-                    begun["run_id"],
-                    "--kind",
-                    "outgoing_like_confirmed",
-                    "--field",
-                    f"action_id={action_id}",
-                    "--field",
-                    f"photographer_id={photographer_id}",
-                    "--field",
-                    f"photo_id={photo_id}",
-                    "--field",
-                    f"photo_url=https://example.test/{photo_id}",
-                    "--field",
-                    "quota_bucket=new",
-                    "--field",
-                    "before_state=not_liked",
-                    "--field",
-                    "after_state=liked",
-                    "--now",
-                    f"2026-08-12T09:{index // 60:02}:{index % 60:02}+00:00",
-                )
-                self.assertEqual(result.returncode, 0, payload)
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id",
+                begun["run_id"],
+                "--kind",
+                "candidate_skipped",
+                "--field",
+                "photographer_id=r200",
+                "--field",
+                "reason=already_liked",
+                "--now",
+                "2026-08-12T09:04:00+00:00",
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "daily_complete")
 
             result, _ = invoke(
                 root,
@@ -624,7 +640,9 @@ class CliTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             result, status = invoke(root, "status", "--json", "--now", "2026-08-12T10:01:00+00:00")
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(status["today"]["confirmed_likes"], 100)
+            self.assertEqual(status["today"]["confirmed_likes"], 1)
+            self.assertEqual(status["today"]["covered_photographers"], 200)
+            self.assertEqual(status["today"]["remaining_photographer_quota"], 0)
             self.assertEqual(len(list((root / "runs").glob("run-*.md"))), 1)
 
     def test_four_historical_25_like_runs_still_rebuild_to_100(self):
@@ -677,6 +695,51 @@ class CliTest(unittest.TestCase):
             self.assertEqual(payload["code"], "daily_incomplete")
             self.assertTrue((root / "checkpoints" / f"{begun['run_id']}.md").exists())
             self.assertFalse((root / "runs" / f"{begun['run_id']}.md").exists())
+
+    def test_comment_contract_accepts_only_three_thumbs_up(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 0, dt(12, 8), "2026-08-12")
+            result, begun = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T09:00:00+00:00")
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            fields = (
+                "action_id=comment-1",
+                "photographer_id=p1",
+                "photo_id=photo-1",
+                "before_state=not_visible",
+                "after_state=visible",
+            )
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id",
+                begun["run_id"],
+                "--kind",
+                "outgoing_comment_confirmed",
+                "--field",
+                "content=拍的真棒👍",
+                *(value for field in fields for value in ("--field", field)),
+                "--now",
+                "2026-08-12T09:01:00+00:00",
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "invalid_comment_content", payload)
+
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id",
+                begun["run_id"],
+                "--kind",
+                "outgoing_comment_confirmed",
+                "--field",
+                "content=👍👍👍",
+                *(value for field in fields for value in ("--field", field)),
+                "--now",
+                "2026-08-12T09:01:01+00:00",
+            )
+            self.assertEqual(result.returncode, 0, payload)
 
     def test_active_run_cannot_carry_actions_across_shanghai_midnight(self):
         with TemporaryDirectory() as directory:
@@ -1113,4 +1176,4 @@ class CliTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0)
             self.assertEqual(payload["daily_task_id"], "2026-08-13")
-            self.assertEqual(payload["remaining_daily_quota"], 100)
+            self.assertEqual(payload["remaining_photographer_quota"], 200)

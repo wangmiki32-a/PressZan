@@ -27,6 +27,21 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("Automation 不随 Git 迁移", recovery)
         self.assertIn("Git-backed", schema)
 
+    def test_windows_launcher_is_repo_relative_and_documented(self):
+        launcher = ROOT / "scripts" / "feedback_growth.cmd"
+        content = launcher.read_text(encoding="utf-8")
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+
+        self.assertTrue(launcher.is_file())
+        self.assertIn(".venv\\Scripts\\python.exe", content)
+        self.assertIn("codex-primary-runtime", content)
+        self.assertIn('set "PYTHONUTF8=1"', content)
+        self.assertNotIn("mimi4", content)
+        for text in (skill, readme, operations):
+            self.assertIn("feedback_growth.cmd", text)
+
     def test_entrypoint_routes_all_public_operations_and_cli_lifecycle(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
 
@@ -59,11 +74,14 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("references/browser-workflow.md", text)
         self.assertIn("references/event-schema.md", text)
         self.assertIn("references/dashboard-semantics.md", text)
-        for value in ("30", "12", "100", "80", "72", "7"):
+        for value in ("30", "200", "72"):
             self.assertIn(value, text)
-        self.assertIn("当日累计 100", text)
+        self.assertIn("200 位不同摄影师", text)
+        self.assertIn("第一张", text)
         self.assertIn("每次确认后立即", text)
-        self.assertIn("拍的真棒👍", text)
+        self.assertIn("👍👍👍", text)
+        self.assertNotIn("拍的真棒👍", text)
+        self.assertNotIn("verified 距上次确认评论", text)
         self.assertIn("before_state", text)
         self.assertIn("after_state", text)
         for stop in ("CAPTCHA", "限频", "登录失效", "平台警告", "账号不匹配", "状态不明确"):
@@ -75,8 +93,8 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("Dora0125", text)
         self.assertIn("f43fc656a435b8f41e84d05b0123c2485", text)
         self.assertIn("最近 30", text)
-        self.assertIn("最近 12", text)
-        self.assertIn("第一幅", text)
+        self.assertIn("第一张", text)
+        self.assertNotIn("最近 12", text)
         self.assertIn("一次", text)
         self.assertIn("本地高分队列", text)
         self.assertIn("before_state", text)
@@ -111,7 +129,7 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn('display_name: "500px Feedback Growth"', text)
         self.assertIn('short_description: "用可归因反馈持续优化 500px 摄影师点赞互动与回馈增长"', text)
         self.assertIn(
-            'default_prompt: "使用 $500px-feedback-growth 冻结当前 5 张公开作品，恢复或开始本轮点赞，并自动安排两次只读回顾。"',
+            'default_prompt: "使用 $500px-feedback-growth 冻结当前 5 张公开作品，处理 200 位摄影师，并在每次确认点赞后评论 👍👍👍。"',
             text,
         )
         self.assertIn("allow_implicit_invocation: false", text)

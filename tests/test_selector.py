@@ -55,21 +55,20 @@ def state_for(candidates):
 
 
 class SelectorTest(unittest.TestCase):
-    def test_complete_day_allocates_quotas_and_unique_reach(self):
-        exploit = [candidate(f"v{i:02}", "verified", i) for i in range(45)]
-        retest = [candidate(f"r{i:02}", "new", i, True) for i in range(20)]
-        new = [candidate(f"n{i:02}", "new", i) for i in range(15)]
+    def test_complete_day_allocates_200_unique_photographers_without_second_likes(self):
+        exploit = [candidate(f"v{i:03}", "verified", i) for i in range(112)]
+        retest = [candidate(f"r{i:03}", "new", i, True) for i in range(50)]
+        new = [candidate(f"n{i:03}", "new", i) for i in range(38)]
         candidates = exploit + retest + new
 
-        result = select_run_candidates(candidates, state_for(candidates), NOW, seed=8122026, limit=100)
+        result = select_run_candidates(candidates, state_for(candidates), NOW, seed=8122026, limit=200)
 
         buckets = Counter(item["bucket"] for item in result.selected)
         ids = [item["photographer_id"] for item in result.selected]
-        self.assertEqual(buckets, {"exploit_first": 45, "retest": 20, "new": 15, "verified_second": 20})
-        self.assertEqual(len(set(ids)), 80)
-        self.assertLessEqual(max(Counter(ids).values()), 2)
-        second_ids = {item["photographer_id"] for item in result.selected if item["bucket"] == "verified_second"}
-        self.assertTrue(all(identifier.startswith("v") for identifier in second_ids))
+        self.assertEqual(buckets, {"exploit_first": 112, "retest": 50, "new": 38})
+        self.assertEqual(len(ids), 200)
+        self.assertEqual(len(set(ids)), 200)
+        self.assertNotIn("verified_second", buckets)
         self.assertEqual(result.status, "daily_complete")
 
     def test_retest_new_is_not_new_exploration(self):
@@ -82,7 +81,7 @@ class SelectorTest(unittest.TestCase):
     def test_shortage_does_not_weaken_constraints(self):
         candidates = [candidate(f"n{i:02}", "new", i) for i in range(70)]
 
-        result = select_run_candidates(candidates, state_for(candidates), NOW, seed=2, limit=100)
+        result = select_run_candidates(candidates, state_for(candidates), NOW, seed=2, limit=200)
 
         self.assertEqual(len(result.selected), 70)
         self.assertEqual(result.status, "incomplete_candidate_exhausted")

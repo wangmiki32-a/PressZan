@@ -60,7 +60,7 @@ class RepositoryStateTest(unittest.TestCase):
         }
         counts = Counter(item.outcome for item in eligible.values())
 
-        self.assertEqual(counts, Counter({"failure": 58, "success": 42}))
+        self.assertEqual(counts, Counter({"open": 100, "failure": 58, "success": 42}))
 
     def test_checkpoints_dashboard_and_credentials_remain_ignored(self):
         probes = (

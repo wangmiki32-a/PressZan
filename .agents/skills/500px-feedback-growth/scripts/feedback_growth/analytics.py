@@ -20,6 +20,7 @@ from .model import (
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 WINDOW = timedelta(hours=72)
 ROLLING = timedelta(days=30)
+COVERAGE_CONTRACT_START_DAY = "2026-08-18"
 
 
 class StateValidationError(ValueError):
@@ -107,6 +108,7 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
     daily_likes: MutableMapping[str, List[Event]] = defaultdict(list)
     daily_comments: MutableMapping[str, List[Event]] = defaultdict(list)
     daily_skips: MutableMapping[str, Counter] = defaultdict(Counter)
+    daily_skipped_photographers: MutableMapping[str, set] = defaultdict(set)
     daily_risks: MutableMapping[str, List[Mapping[str, str]]] = defaultdict(list)
     last_comment: Dict[str, datetime] = {}
     paused_reason = None
@@ -216,6 +218,7 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
             last_comment[str(data["photographer_id"])] = occurred_at
         elif item.kind == "candidate_skipped":
             daily_skips[daily_task_id][str(data["reason"])] += 1
+            daily_skipped_photographers[daily_task_id].add(str(data["photographer_id"]))
         elif item.kind == "safety_paused":
             paused_reason = str(data["reason"])
             daily_risks[daily_task_id].append(
@@ -271,8 +274,11 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
         likes = daily_likes.get(day, [])
         quota_counts = Counter(str(item.data["quota_bucket"]) for item in likes)
         unique = frozenset(str(item.data["photographer_id"]) for item in likes)
+        covered = frozenset(set(unique) | daily_skipped_photographers.get(day, set()))
         latest_run_status = run_status[day][2] if day in run_status else None
-        if len(likes) == 100:
+        legacy_completed = day < COVERAGE_CONTRACT_START_DAY and len(likes) == 100
+        completed = latest_run_status == "completed" or legacy_completed
+        if completed:
             task_status = "completed"
         elif latest_run_status in {"paused_incomplete", "incomplete_candidate_exhausted"}:
             task_status = latest_run_status
@@ -293,10 +299,11 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
             quota_counts=dict(quota_counts),
             confirmed_comments=len(daily_comments.get(day, [])),
             status=task_status,
-            completed_at=run_ended.get(day) if len(likes) == 100 else None,
+            completed_at=run_ended.get(day) if completed else None,
             reinforcement_likes=quota_counts.get("verified_second", 0),
             skip_counts=dict(daily_skips.get(day, {})),
             risk_events=tuple(daily_risks.get(day, [])),
+            covered_photographer_ids=covered,
         )
 
     outgoing_touches = []

@@ -43,11 +43,11 @@
 - 任何浏览器变更前先执行 `doctor`，通过后再执行 `status --json`。doctor 未通过时不得开始新的页面互动。
 - 如果存在 active/recoverable run，先 `resume --run-id <run_id>`，不得创建新 run 或重复已确认动作。
 - Active run 只能在其 `daily_task_id` 当日恢复；跨 Asia/Shanghai 日界线后先封存为未完成，禁止把新动作追加到旧日任务。
-- 默认公开入口是零参数 `$500px-feedback-growth`；一次显式启动授权完成当日剩余额度，目标为当日累计 100。
+- 默认公开入口是零参数 `$500px-feedback-growth`；一次显式启动授权完成当日剩余覆盖，目标为恰好处理 200 位不同摄影师。
 - 首次真实互动必须来自用户明确批准且仍有效的 preview；用户只需回复“确认执行”，内部 `preview_id` 不进入公开操作约定。录制工作流不等于批准候选。
 - 同日新鲜 preview 且之后没有确认互动时，只快速复核已批准候选：按 `source_url` 分组，每个来源页只访问一次。不得重新扫描全部 30 幅作品或点赞者列表。
 - `preview_not_latest`、`preview_changed` 或 `preview_expired` 必须封存为 `approval_rejected`，再生成新 preflight；不得强行匹配旧 digest。
-- 正常运行不按固定数量拆分；有 recoverable run 时继续同一个 run，只有达到 100、安全暂停或候选耗尽才封存。
+- 正常运行不按固定数量拆分；有 recoverable run 时继续同一个 run，只有覆盖 200 位不同摄影师、安全暂停或候选耗尽才封存。
 - 每轮点赞开始前必须从本人主页冻结恰好 5 张当前公开展示作品并完成逐张 baseline；任一张缺失、非公开、账号不符或读取未完成都禁止点赞。
 - 上一周期未 settled 或 abandoned 时不得开始下一轮点赞；用户手动上传和调整展示不受此限制。
 - 点赞结束后按最后一次确认点赞临时创建 `+20h`、`+70h` 两个一次性只读回顾任务。不得用周期性轮询代替，也不得在回顾任务中产生互动。
@@ -65,13 +65,13 @@
 
 ### 配额与选择
 
-- 每次显式启动持续完成 Asia/Shanghai 当日剩余额度，累计最多 100 个页面确认的成功点赞；未完成额度不结转。
-- 完成日必须覆盖至少 80 位不同摄影师；单人每天最多 2 幅，第二幅只限 `verified`。
-- 每人只检查最近 12 幅作品；全部已点赞或作品不可读时跳过，不消耗成功额度。
+- 每次显式启动持续完成 Asia/Shanghai 当日剩余覆盖，完成条件为恰好处理 200 位不同摄影师；未完成覆盖不结转。
+- 每位摄影师每天只处理一次，只检查主页当前第一张作品；第一张已点赞或不可读时记录跳过并计入覆盖，确认点赞数可以少于 200。
+- 不得处理第 201 位摄影师，也不再执行 `verified` 第二赞。
 - 历史点赞者只能初始化为 `promising`；滚动 30 天内至少 2 次独立归因回馈才是 `verified`。
 - 同一摄影师 72 小时窗口内的多幅回馈只计一个独立回馈者；报告统一使用“归因回馈”，不声称严格因果。
 - 新周期归因只接受冻结 5 张内、排除 baseline、位于 episode 时间窗的 observation。已映射 cycle 的旧 success 不得直接驱动层级、Beta、KPI、趋势或 Dashboard。
-- 评论只允许符合 skill 规则的 `verified` 摄影师，固定文本为“拍的真棒👍”，并与点赞分开记录。
+- 每次页面确认点赞后，在同一作品评论固定文本 `👍👍👍`；同文本人评论已可见时不重复，新增评论必须单独确认和记录，状态不明确时安全暂停。
 
 ## 代码修改规则
 
@@ -94,6 +94,8 @@
 python3 -m unittest discover -v
 git diff --check
 ```
+
+Windows 原生环境使用 `.\.venv\Scripts\python.exe -m unittest discover -v`；生产 CLI 使用 `.\.agents\skills\500px-feedback-growth\scripts\feedback_growth.cmd`，两者不得改变测试或业务参数。
 
 按改动范围追加：
 

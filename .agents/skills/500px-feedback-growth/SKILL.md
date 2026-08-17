@@ -24,10 +24,16 @@ description: Use when a user asks to run, resume, preview, inspect, or visualize
 
 用户不需要输入 `preview_id`、`run_id` 或内部 CLI 参数。执行 `preflight` 或真实互动前，完整读取 [浏览器工作流](references/browser-workflow.md) 和 [运行恢复手册](references/operational-recovery.md)；重建或解释 Dashboard 前读取 [Dashboard 统计语义](references/dashboard-semantics.md)；排查事件时再读取 [事件 schema](references/event-schema.md)。
 
-内部命令统一使用：
+内部命令在 macOS/Linux 使用：
 
 ```bash
 python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command>
+```
+
+Windows 原生 Codex 使用仓库内启动器；它依次查找项目 `.venv`、Codex 随附 Python 和系统 Python，不改变 CLI 参数或业务行为：
+
+```powershell
+.\.agents\skills\500px-feedback-growth\scripts\feedback_growth.cmd <command>
 ```
 
 默认状态根由 CLI 从仓库位置解析；只有测试、受控恢复或外部调度才使用 `--state-root` 或 `PRESSZAN_STATE_ROOT`。
@@ -41,7 +47,7 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command
 3. 若返回同日 recoverable run，执行 `resume --run-id <run_id>`，继续同一个 run；不得新建运行或重复动作。若返回 `stale_recoverable_run`，不得跨日追加动作，先封存旧日为 `paused_incomplete`，再开始新日任务。
 4. 新周期先 `begin --mode cycle --cycle-id <cycle_id>`：按主页当前顺序确认并冻结 5 张公开本人作品，逐张完整读取当前点赞者作为 baseline；不是 5 张、账号不符、非公开或任一张未完成读取时禁止点赞。
 5. 若首次尚未批准，执行只读 preflight，展示候选数、层级、配额和风险摘要，只询问“确认执行？”。
-6. 已批准且 baseline 已 sealed 时，使用 `begin --mode run --cycle-id <cycle_id>` 绑定周期并连续执行到当日累计 100。
+6. 已批准且 baseline 已 sealed 时，使用 `begin --mode run --cycle-id <cycle_id>` 绑定周期并连续处理到当日恰好覆盖 200 位不同摄影师。
 
 ## 周期回顾自动化
 
@@ -58,7 +64,7 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command
 1. 执行 `begin --mode preflight`，保存内部 `run_id`。
 2. 扫描自己的最近 30 幅作品、收到的点赞和评论候选；不得点赞、评论、关注或私信。
 3. 每次页面观察后立即执行 `event --run-id <run_id> --kind <kind> --field key=value`。
-4. 执行 `preview --run-id <run_id> --seed <seed>`；计划上限是当天剩余额度，最多 100 个合格动作。
+4. 执行 `preview --run-id <run_id> --seed <seed>`；计划上限是当天尚未覆盖的摄影师数，最多 200 位。
 5. 执行 `finish --run-id <run_id> --status completed`，向用户展示摘要，但隐藏内部 ID。
 
 ## 首次“确认执行”
@@ -69,15 +75,15 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command
 4. 执行 `approve --run-id <run_id> --preview-id <preview_id>`；仅在 `approved=true` 时继续。
 5. 若返回 `preview_not_latest`、`preview_changed` 或 `preview_expired`，执行 `finish --run-id <run_id> --status approval_rejected`，自动生成新 preflight，不把内部错误或 ID 交给用户处理。
 
-## 连续执行到 100
+## 连续覆盖 200 位摄影师
 
-1. 每位候选检查最近 12 幅作品，选择第一幅可见未点赞作品。全部已点赞或作品不可读则跳过，不消耗成功额度。
+1. 每位候选只检查主页当前第一张作品。已点赞或作品不可读时记录 `candidate_skipped`；无论点赞或跳过，该摄影师当日只处理一次并计入覆盖。
 2. 点赞前读取 `before_state=not_liked`；点击一次后重新读取同一控件。只有 `after_state=liked` 才记成功。
 3. 每次确认后立即追加 `outgoing_like_confirmed`；禁止在运行结束后集中回填。
-4. 继续当前评论链，链路不足时从本地高分队列重新播种，直到当日累计 100、安全停止或候选耗尽。
-5. 完成日覆盖至少 80 位摄影师；单人每天最多 2 幅，第二幅只限 verified。配额为 45 个 verified/promising 首赞、20 个复测、15 个新人、最多 20 个 verified 第二赞。
-6. verified 距上次确认评论至少 7 天时，才可在当天第一幅成功点赞作品评论固定文本“拍的真棒👍”；评论单独确认和记录。
-7. 达到当日累计 100 后执行 `finish --run-id <run_id> --status completed`，再执行 `status --json` 和 `dashboard`。
+4. 每次确认点赞后，在同一作品评论固定文本 `👍👍👍`。若当前账号已有完全相同的可见评论，不重复提交；否则只有评论可见后才追加 `outgoing_comment_confirmed`。评论区不可用或状态不明确时立即 `safety_paused`。
+5. 继续当前评论链，链路不足时从本地高分队列重新播种，直到覆盖恰好 200 位不同摄影师、安全停止或候选耗尽。
+6. 每位摄影师每天只处理一次，不再执行 verified 第二赞。候选配额为 112 个 verified/promising、50 个复测、38 个新人；桶不足时由其他首触达候选补足。
+7. 覆盖恰好 200 位后执行 `finish --run-id <run_id> --status completed`，再执行 `status --json` 和 `dashboard`。确认点赞数可以少于 200；不得处理第 201 位。
 
 ## Dashboard 回顾
 
@@ -90,7 +96,7 @@ python3 .agents/skills/500px-feedback-growth/scripts/feedback_growth.py <command
 ## 停止与恢复
 
 - CAPTCHA、限频、登录失效、平台警告、账号不匹配或状态不明确：立即追加 `safety_paused` 并停止；不绕过、不切换账号、不重复点击。
-- 候选池和评论链都耗尽：执行 `finish --run-id <run_id> --status incomplete_candidate_exhausted`，不得降低 100/80/单人上限或 verified 第二赞约束。
+- 候选池和评论链都耗尽：执行 `finish --run-id <run_id> --status incomplete_candidate_exhausted`，不得降低 200 位不同摄影师目标或放宽单人一次约束。
 - 工具或线程中断但页面状态仍可恢复：保留 active checkpoint，不错误封存；下次零参数启动通过 `resume --run-id` 继续。
 - 上海日界线后旧 active run 不可继续；`resume` 和 `event` 必须返回 `daily_task_expired`，旧日未完成额度不结转。
 - 普通加载失败只刷新读取一次；仍失败则记录 `scan_issue` 或 `candidate_skipped`。

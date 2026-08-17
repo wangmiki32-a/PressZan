@@ -24,3 +24,5 @@
 
 - [ADR-0001：以追加式 Markdown 事件日志作为运行事实源](ADR-0001-append-only-event-log.md)
 - [ADR-0002：一次运行完成当日剩余点赞任务](ADR-0002-single-run-daily-task.md)
+- [ADR-0003：私有 Git 版本化 sealed runs](ADR-0003-git-backed-sealed-runs.md)
+- [ADR-0004：以 200 位摄影师覆盖作为每日完成条件](ADR-0004-200-photographer-coverage.md)
