@@ -62,7 +62,7 @@
 ## ID 与即时生命周期
 
 - 点赞 `action_id = sha256(daily_task_id + photographer_id + photo_id + "outgoing_like_confirmed")`。
-- 新 `outgoing_like_confirmed.settlement_mode=immediate` 不创建 episode，当天即成为未反馈轻负样本。旧事件缺少该字段时按 `legacy` 解析并保留原 episode 生命周期。
+- 新 `outgoing_like_confirmed.settlement_mode=immediate` 不创建 episode，任务封存后即成为未反馈轻负样本。旧事件缺少该字段时按 `legacy` 解析并保留原 episode 生命周期。
 - 启动反馈扫描固定本人最新 3 张。首次完整扫描的 `photo_id` 进入 `baseline_photo_ids`；以后相同作品的新 pair 逐条计分，同一触达最多 3 分。
 - `feedback_scan_completed` 的三个 ID 列表必须无重复；`completed_photo_ids` 是 `photo_ids` 子集，`baseline_photo_ids` 是 completed 子集。三个计数字段必须是非负整数，`completed_at` 必须带时区。
 - 不完整扫描也写 summary，但只列实际完成的作品；缺失作品必须有 `scan_issue`，不能按零点赞解释。
@@ -76,7 +76,7 @@
 
 - `before_state` / `after_state` 必须来自同一可见控件的前后读取。
 - 新运行的 `quota_bucket` 仅用 `exploit_first`、`new`、`retest`；旧 `verified_second` 只读兼容。
-- 新运行的摄影师覆盖由 `outgoing_like_confirmed` 与 `candidate_skipped` 中不同 `photographer_id` 的并集重建；两类事件都用批准计划中的 `quota_bucket` 计入 `120/60/20` 实际配额，同一摄影师每天只以首次覆盖事件计一次，恰好 200 位才完成。历史无 `quota_bucket` 的 skip 继续可读，旧 `verified_second` 继续可读，新运行不再生成该桶。
+- 新运行的摄影师覆盖由 `outgoing_like_confirmed` 与 `candidate_skipped` 中不同 `photographer_id` 的并集重建；两类事件都用批准计划中的 `quota_bucket` 计入 `120/60/20` 实际配额，同一摄影师每次任务只以首次覆盖事件计一次，恰好 200 位才完成。历史无 `quota_bucket` 的 skip 继续可读，旧 `verified_second` 继续可读，新运行不再生成该桶。
 - `scan_id` 只要求在同一 `run_id` 内唯一；重建器使用 `(run_id, scan_id)` 关联启动扫描、作品、观察、issue 与 summary。
 - 新运行每次确认点赞后使用 `outgoing_comment_confirmed` 记录可见的固定评论 `👍👍👍`；历史评论内容保持原样，不补写、不迁移。
 - `safety_paused.reason` 使用可搜索值：`captcha`、`rate_limit`、`login_lost`、`platform_warning`、`account_mismatch`、`ambiguous_state`。

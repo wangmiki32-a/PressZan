@@ -40,13 +40,13 @@ Windows 原生 Codex 使用同参数启动器：
 
 | 状态 | 动作 |
 |---|---|
-| 当日已覆盖 200 位 | 停止，不处理第 201 位 |
+| 本次任务已覆盖 200 位 | 停止，不处理第 201 位 |
 | 存在 recoverable run | `resume --run-id <run_id>`，从最后确认事件继续 |
-| `paused_reason` 非空 | 保留断点，确认页面和账号恢复后继续 |
+| `paused_reason` 非空 | 停止外发动作，保留证据并将当前 run 封存为 `paused_incomplete` |
 | 首次尚未批准 | 执行只读 preflight，展示摘要并询问“确认执行？” |
-| 今日有剩余覆盖且无 active run | 开始连续 run，执行到 200 位或安全终态 |
+| 本次任务有剩余覆盖且无 active run | 开始连续 run，执行到 200 位或安全终态 |
 
-## 标准日任务
+## 标准任务
 
 ### 最新 3 张反馈扫描
 
@@ -64,7 +64,7 @@ Windows 原生 Codex 使用同参数启动器：
 
 ### 首次批准
 
-用户回复“确认执行”后，skill 解析最新 preview；满足同一 `daily_task_id`、24 小时有效且 preview 后没有确认互动，才快速复核。
+用户回复“确认执行”后，skill 解析最新 preview；满足同一 `daily_task_id`、仍在 24 小时有效期且 preview 后没有确认互动，才快速复核。跨过日界线本身不会使 preview 失效。
 
 快速复核只打开候选计划中的唯一 `source_url`。稳定字段、顺序、配额或 digest 变化时返回 `preview_changed`，封存 `approval_rejected` 后重新 preflight。
 
@@ -80,7 +80,7 @@ Windows 原生 Codex 使用同参数启动器：
 
 ### 即时结算
 
-1. 新触达当天封存后立即进入账本，初始为未反馈轻负样本。
+1. 新触达在任务封存后立即进入账本，初始为未反馈轻负样本。
 2. 不创建新的 cycle、72 小时 episode 或未来 review Automation。
 3. 下次启动扫描发现某摄影师的新点赞时，每张作品计 1 分并归到其最近触达，单次触达最多 3 分；该触达不再同时保留未反馈状态。
 4. 原始分不封顶，有效分按 30 天半衰期衰减并封顶 12。

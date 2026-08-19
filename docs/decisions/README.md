@@ -27,3 +27,4 @@
 - [ADR-0003：私有 Git 版本化 sealed runs](ADR-0003-git-backed-sealed-runs.md)
 - [ADR-0004：以 200 位摄影师覆盖作为每日完成条件](ADR-0004-200-photographer-coverage.md)
 - [ADR-0005：最新三张增量扫描与当日即时结算](ADR-0005-immediate-feedback-settlement.md)
+- [ADR-0006：Active run 跨日连续恢复](ADR-0006-cross-day-active-run.md)

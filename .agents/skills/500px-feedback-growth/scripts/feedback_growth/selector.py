@@ -70,8 +70,9 @@ def select_run_candidates(
     now: datetime,
     seed: int,
     limit: int = DAILY_TARGET,
+    daily_task_id: Optional[str] = None,
 ) -> SelectionResult:
-    day = _today(now)
+    day = daily_task_id or _today(now)
     daily = state.daily_tasks.get(day)
     existing_ids = set(getattr(daily, "covered_photographer_ids", ()) if daily else ())
     existing_total = len(existing_ids)

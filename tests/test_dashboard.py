@@ -69,6 +69,19 @@ def state_with(*, tasks=(), photographers=None, touches=(), scans=(), paused_rea
 
 
 class DashboardTest(unittest.TestCase):
+    def test_view_model_keeps_explicit_cross_day_task_without_coverage(self):
+        task = daily("2026-08-19", 0, 0)
+
+        view = build_dashboard_view_model(
+            state_with(tasks=(task,)),
+            dt(20, 1),
+            current_daily_task_id="2026-08-19",
+        )
+
+        self.assertEqual(view["current_task"]["daily_task_id"], "2026-08-19")
+        self.assertEqual(view["current_task"]["covered_photographers"], 0)
+        self.assertEqual(view["current_task"]["status"], "in_progress")
+
     def test_view_model_has_immediate_feedback_sections_and_allocation(self):
         now = dt(19, 12)
         task = daily(

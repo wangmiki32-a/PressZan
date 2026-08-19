@@ -2,7 +2,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Optional
 
 from .analytics import COVERAGE_CONTRACT_START_DAY, SHANGHAI, classify_photographer
 from .model import AggregateState
@@ -12,7 +12,13 @@ STRATEGY_PLAN = {"exploit_first": 120, "new": 60, "retest": 20}
 TIER_ORDER = ("verified", "promising", "dormant", "new")
 
 
-def _current_daily(state: AggregateState, now: datetime):
+def _current_daily(
+    state: AggregateState,
+    now: datetime,
+    current_daily_task_id: Optional[str] = None,
+):
+    if current_daily_task_id is not None:
+        return state.daily_tasks.get(current_daily_task_id)
     today_id = now.astimezone(SHANGHAI).date().isoformat()
     execution_days = [
         daily
@@ -22,16 +28,21 @@ def _current_daily(state: AggregateState, now: datetime):
     return max(execution_days, key=lambda item: item.daily_task_id, default=state.daily_tasks.get(today_id))
 
 
-def _current_task(state: AggregateState, now: datetime) -> Mapping[str, object]:
+def _current_task(
+    state: AggregateState,
+    now: datetime,
+    current_daily_task_id: Optional[str] = None,
+) -> Mapping[str, object]:
     today_id = now.astimezone(SHANGHAI).date().isoformat()
-    daily = _current_daily(state, now)
+    task_id = current_daily_task_id or today_id
+    daily = _current_daily(state, now, current_daily_task_id)
     if daily is None:
         return {
-            "daily_task_id": today_id,
+            "daily_task_id": task_id,
             "confirmed_likes": 0,
             "unique_photographers": 0,
             "covered_photographers": 0,
-            "coverage_target": 200 if today_id >= COVERAGE_CONTRACT_START_DAY else None,
+            "coverage_target": 200 if task_id >= COVERAGE_CONTRACT_START_DAY else None,
             "confirmed_comments": 0,
             "skipped": 0,
             "skip_counts": {},
@@ -184,10 +195,14 @@ def _history_tabs(state: AggregateState):
     return tabs
 
 
-def build_dashboard_view_model(state: AggregateState, now: datetime) -> Mapping[str, object]:
+def build_dashboard_view_model(
+    state: AggregateState,
+    now: datetime,
+    current_daily_task_id: Optional[str] = None,
+) -> Mapping[str, object]:
     return {
         "generated_at": now.isoformat(),
-        "current_task": _current_task(state, now),
+        "current_task": _current_task(state, now, current_daily_task_id),
         "latest_feedback_scan": _latest_feedback_scan(state),
         "performance_30d": _performance_30d(state, now),
         "tier_distribution": _tier_distribution(state, now),
@@ -202,12 +217,13 @@ def render_dashboard(
     now: datetime,
     template_path: Path,
     output_path: Path,
+    current_daily_task_id: Optional[str] = None,
 ) -> Path:
     template = template_path.read_text(encoding="utf-8")
     if template.count("__DASHBOARD_DATA__") != 1:
         raise ValueError("dashboard template must contain exactly one data placeholder")
     payload = json.dumps(
-        build_dashboard_view_model(state, now),
+        build_dashboard_view_model(state, now, current_daily_task_id),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -217,11 +233,17 @@ def render_dashboard(
     return output_path
 
 
-def generate_dashboard(state_root: Path, state: AggregateState, now: datetime) -> Path:
+def generate_dashboard(
+    state_root: Path,
+    state: AggregateState,
+    now: datetime,
+    current_daily_task_id: Optional[str] = None,
+) -> Path:
     skill_root = Path(__file__).resolve().parents[2]
     return render_dashboard(
         state,
         now,
         skill_root / "assets" / "dashboard.html",
         state_root / "dashboard.html",
+        current_daily_task_id,
     )

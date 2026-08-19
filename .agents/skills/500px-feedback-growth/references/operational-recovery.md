@@ -16,7 +16,7 @@
 | `doctor` 返回 `untracked_sealed_runs` | 当前状态未提交或 clone 未拉到最新 runs | 不进入页面；确认无未封存 checkpoint 后提交或 pull sealed runs |
 | checkpoint 事件落入旧运行 | 临时脚本复用旧 ID | 每次写入前核对 `run_id`、`scan_id`、`state-root`，写后检查返回 position |
 | `resume` 返回 `run_not_recoverable` | run 已 sealed 或不是当前 active run | 回到 `status --json`；只恢复返回的 recoverable run |
-| `begin` 返回 `stale_recoverable_run` | active run 跨过 Asia/Shanghai 日界线 | 不追加旧日动作；封存为 `paused_incomplete` 后开始新日任务 |
+| `begin` 返回 `recoverable_run` | 已存在 active run，包括跨过 Asia/Shanghai 日界线的任务 | 使用返回的 `recoverable_run_id` 恢复；不得创建第二个 run |
 
 ## 扫描恢复
 
@@ -28,13 +28,13 @@
 
 ## Preview 与连续日任务恢复
 
-- 同日新鲜 preview 的批准只复核候选计划中的唯一来源页，不重复最新 3 张扫描或完整 30 幅候选扫描。
+- 有效期内且尚无确认互动的 preview 只复核候选计划中的唯一来源页，不重复最新 3 张扫描或完整 30 幅候选扫描。
 - 正常运行不按固定动作数切分；一个 run 持续到恰好覆盖 200 位不同摄影师。
 - 每个确认动作独立 checkpoint；中断时恢复同一 `run_id`，不重放已确认动作。
 - Sealed 后 retained checkpoint 只作审计；CLI 拒绝继续 append 或 resume。
 - 浏览器连接丢失但未出现安全警告时保留 active checkpoint；重连后先读 `resume` 输出和页面当前状态。
 - 只有覆盖 200 位、安全暂停或候选耗尽时才封存；未知中断不得伪写 `completed`。
-- 跨日 active run 不结转额度，需先封存旧日未完成状态。
+- 跨日 active run 沿用原 `daily_task_id` 和剩余覆盖继续执行；只有完成、候选耗尽或安全暂停时才封存。
 
 ## 跨机器恢复边界
 

@@ -235,6 +235,53 @@ class CliTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertEqual(payload["code"], "invalid_feedback_scan")
 
+    def test_immediate_scan_observation_does_not_append_legacy_success(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            touch_at = dt(19, 6)
+            scan_at = dt(19, 8)
+            action_id = deterministic_action_id(
+                "2026-08-19",
+                "p1",
+                "legacy-photo",
+                "outgoing_like_confirmed",
+            )
+            identifier = hashlib.sha256(f"episode:p1:{action_id}".encode()).hexdigest()
+            legacy_events = (
+                confirmed_like(action_id, "p1", touch_at, photo_id="legacy-photo"),
+                opened(identifier, "p1", action_id, touch_at, touch_at + timedelta(hours=72)),
+            )
+            seal_run(
+                root,
+                RunLog(1, "legacy-run", "2026-08-19", "run", "completed", touch_at, touch_at, legacy_events),
+            )
+            result, begun = invoke(root, "begin", "--mode", "preflight", "--now", scan_at.isoformat())
+            self.assertEqual(result.returncode, 0, begun)
+            append_checkpoint_events(
+                root,
+                begun["run_id"],
+                latest_three_scan("latest-three", scan_at, include_summary=False),
+            )
+
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id", begun["run_id"],
+                "--kind", "received_like_observed",
+                "--field", "scan_id=latest-three",
+                "--field", "photo_id=mine-1",
+                "--field", "work_position=1",
+                "--field", "photographer_id=p1",
+                "--field", "display_name=p1",
+                "--field", "profile_url=https://example.test/p1",
+                "--now", scan_at.isoformat(),
+            )
+
+            self.assertEqual(result.returncode, 0, payload)
+            self.assertEqual(payload["appended"], ["received_like_observed"])
+            checkpoint = read_checkpoint(root, begun["run_id"])
+            self.assertFalse(any(item.kind == "feedback_episode_succeeded" for item in checkpoint.events))
+
     def test_immediate_like_does_not_open_episode(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -751,15 +798,41 @@ class CliTest(unittest.TestCase):
             self.assertEqual(payload["preview_id"], preview["preview_id"])
             self.assertEqual(payload["candidate_count"], 1)
 
-    def test_latest_preview_rejects_cross_day_preview(self):
+    def test_latest_preview_remains_valid_across_shanghai_midnight(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            create_preview(root)
+            seed_approved_likes(root, 37, dt(12, 8), "2026-08-12")
+            preview = create_preview(root, now="2026-08-12T15:59:00+00:00")
+            self.assertEqual(preview["quota_snapshot"]["confirmed_likes"], 37)
 
-            result, payload = invoke(root, "latest-preview", "--now", "2026-08-13T09:00:01+00:00")
+            result, payload = invoke(root, "latest-preview", "--now", "2026-08-12T16:01:00+00:00")
 
-            self.assertEqual(result.returncode, 2)
-            self.assertEqual(payload["code"], "preview_not_current_day")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["preview_id"], preview["preview_id"])
+
+    def test_cross_day_approval_binds_run_to_preview_task_day(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 37, dt(12, 8), "2026-08-12")
+            preview = create_preview(root, now="2026-08-12T15:59:00+00:00")
+
+            result, begun = invoke(
+                root,
+                "begin",
+                "--mode", "run",
+                "--approve-preview", preview["preview_id"],
+                "--now", "2026-08-12T16:01:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            checkpoint = read_checkpoint(root, begun["run_id"])
+            self.assertEqual(checkpoint.header.daily_task_id, "2026-08-12")
+
+            result, payload = invoke(root, "status", "--json", "--now", "2026-08-12T16:01:00+00:00")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["today"]["daily_task_id"], "2026-08-12")
+            self.assertEqual(payload["today"]["covered_photographers"], 37)
+            self.assertEqual(payload["today"]["remaining_photographer_quota"], 163)
 
     def test_one_run_completes_with_200_covered_photographers_and_fewer_likes(self):
         with TemporaryDirectory() as directory:
@@ -917,15 +990,15 @@ class CliTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, payload)
 
-    def test_active_run_cannot_carry_actions_across_shanghai_midnight(self):
+    def test_active_run_can_resume_and_carry_actions_across_shanghai_midnight(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            seed_approved_likes(root, 0, dt(12, 8), "2026-08-12")
+            seed_approved_likes(root, 37, dt(12, 8), "2026-08-12")
             _, begun = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T15:59:00+00:00")
 
             result, payload = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T16:01:00+00:00")
             self.assertEqual(result.returncode, 2)
-            self.assertEqual(payload["code"], "stale_recoverable_run")
+            self.assertEqual(payload["code"], "recoverable_run")
             self.assertEqual(payload["recoverable_run_id"], begun["run_id"])
 
             result, payload = invoke(
@@ -936,8 +1009,14 @@ class CliTest(unittest.TestCase):
                 "--now",
                 "2026-08-12T16:01:00+00:00",
             )
-            self.assertEqual(result.returncode, 2)
-            self.assertEqual(payload["code"], "daily_task_expired")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["header"]["run_id"], begun["run_id"])
+
+            result, payload = invoke(root, "status", "--json", "--now", "2026-08-12T16:01:00+00:00")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["today"]["daily_task_id"], "2026-08-12")
+            self.assertEqual(payload["today"]["covered_photographers"], 37)
+            self.assertEqual(payload["today"]["remaining_photographer_quota"], 163)
 
             action_id = deterministic_action_id("2026-08-12", "p1", "photo-1", "outgoing_like_confirmed")
             result, payload = invoke(
@@ -964,8 +1043,8 @@ class CliTest(unittest.TestCase):
                 "--now",
                 "2026-08-12T16:01:00+00:00",
             )
-            self.assertEqual(result.returncode, 2)
-            self.assertEqual(payload["code"], "daily_task_expired")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(payload["appended"], ["outgoing_like_confirmed"])
 
     def test_fixed_clock_and_seed_rebuild_status_and_dashboard_deterministically(self):
         with TemporaryDirectory() as directory:

@@ -231,6 +231,30 @@ class AnalyticsTest(unittest.TestCase):
 
         self.assertEqual([scan.scan_id for scan in state.feedback_scans], ["shared", "shared"])
 
+    def test_legacy_success_derived_from_immediate_scan_is_ignored(self):
+        touch_at = dt(19, 6)
+        scan_at = dt(19, 8)
+        action_id = "legacy-touch"
+        identifier = episode_id("p1", action_id)
+        events = [
+            confirmed_like(action_id, "p1", touch_at),
+            opened(identifier, "p1", action_id, touch_at, touch_at + timedelta(hours=72)),
+        ]
+        events.extend(
+            latest_three_scan(
+                "latest-three",
+                scan_at,
+                (("mine-1", "p1"),),
+                include_summary=False,
+            )
+        )
+        events.append(success(scan_at, identifier, "mine-1"))
+
+        state = rebuild_state([run(events, day="2026-08-19")], scan_at)
+
+        self.assertEqual(state.episodes[identifier].outcome, "open")
+        self.assertEqual(state.touch_feedback[action_id].feedback_points, 0)
+
     def test_daily_coverage_unions_confirmed_likes_and_skips_by_photographer(self):
         touched_at = NOW - timedelta(hours=1)
         episode = episode_id("p1", "a1")

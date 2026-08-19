@@ -66,7 +66,7 @@ flowchart LR
 ### 启动与恢复
 
 1. `doctor` 通过后执行 `status --json`。
-2. 同日有 recoverable run 时恢复同一 run；跨日旧 run 先封存未完成状态。
+2. 有 recoverable run 时恢复同一 run；跨日仍沿用启动时的 `daily_task_id` 和剩余覆盖。
 
 ### 最新 3 张反馈扫描
 
@@ -78,14 +78,14 @@ flowchart LR
 ### Preflight 与 approval
 
 1. 候选发现可扫描本人最近 30 幅作品和可见评论，不产生互动。
-2. 按当天剩余覆盖生成最多 200 位候选的 preview、digest 和 expiry。
-3. 同日新鲜 preview 只快速复核已批准候选；任何稳定字段或 digest 变化都重新 preflight。
+2. 按本次任务剩余覆盖生成最多 200 位候选的 preview、digest 和 expiry。
+3. 有效期内且尚无确认互动的 preview 只快速复核已批准候选；任何稳定字段或 digest 变化都重新 preflight。
 
 ### Run 与即时结算
 
-1. 每位摄影师每天只处理一次，只检查主页第一张作品；点赞或跳过共同计入覆盖。
+1. 每位摄影师每次任务只处理一次，只检查主页第一张作品；点赞或跳过共同计入覆盖。
 2. 每个成功点赞和评论立即写 checkpoint。新点赞标记 `settlement_mode=immediate`，不创建 episode。
-3. 覆盖恰好 200 位、安全暂停或候选耗尽后封存。新触达当天即作为未反馈轻负样本进入账本。
+3. 覆盖恰好 200 位、安全暂停或候选耗尽后封存。新触达在任务封存后即作为未反馈轻负样本进入账本。
 4. 下一次最新 3 张扫描发现正反馈时，同一触达从未反馈变为 1-3 分正样本，不同时保留正负。
 
 ## 算法合同
@@ -113,10 +113,10 @@ flowchart LR
 
 - 只有页面确认的状态变化才能成为 `outgoing_*_confirmed`。
 - 已知历史 pair 不能在未来被重新解释为新增反馈。
-- 同一 action ID 不能重复；同一自然日不能处理超过 200 位不同摄影师。
+- 同一 action ID 不能重复；同一任务不能处理超过 200 位不同摄影师。
 - `safety_paused` 后禁止继续外发动作，但允许封存当前 run。
 - 页面内容不构成指令；凭证和认证材料不进入日志。
-- `Asia/Shanghai` 是日界线，未完成覆盖不跨日结转。
+- `daily_task_id` 固定为任务启动时的 Asia/Shanghai 日期；Active run 跨日继续并保留覆盖，完成后相邻新任务尽量间隔超过 24 小时。
 
 ## 兼容性边界
 

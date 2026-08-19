@@ -218,6 +218,11 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
             ordered.append((item.occurred_at, log.run_id, index, log.daily_task_id, item))
     ordered.sort(key=lambda row: (row[0], row[1], row[2]))
     scan_facts = _scan_facts(ordered)
+    immediate_scan_observations = {
+        observation
+        for facts in scan_facts.values()
+        for observation in facts["observations"]
+    }
 
     known_pairs = set()
     first_observations: Dict[Tuple[str, str], datetime] = {}
@@ -323,6 +328,8 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
             pair = (photo_id, episode.photographer_id)
             observed_at = first_observations.get(pair)
             declared_at = _parse_time(data["feedback_first_seen_at"], "feedback_first_seen_at")
+            if observed_at is None and (photo_id, episode.photographer_id, declared_at) in immediate_scan_observations:
+                continue
             if observed_at is None or observed_at != declared_at or observed_at <= episode.last_touch_at:
                 raise StateValidationError(f"episode {episode_id} lacks new post-touch feedback")
             if observed_at > episode.expires_at or episode.outcome != "open":
