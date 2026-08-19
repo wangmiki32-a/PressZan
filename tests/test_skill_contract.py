@@ -74,7 +74,7 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("references/browser-workflow.md", text)
         self.assertIn("references/event-schema.md", text)
         self.assertIn("references/dashboard-semantics.md", text)
-        for value in ("30", "200", "72"):
+        for value in ("3", "30", "200"):
             self.assertIn(value, text)
         self.assertIn("200 位不同摄影师", text)
         self.assertIn("第一张", text)
@@ -92,6 +92,7 @@ class SkillContractTest(unittest.TestCase):
 
         self.assertIn("Dora0125", text)
         self.assertIn("f43fc656a435b8f41e84d05b0123c2485", text)
+        self.assertIn("最新 3 张", text)
         self.assertIn("最近 30", text)
         self.assertIn("第一张", text)
         self.assertNotIn("最近 12", text)
@@ -108,6 +109,7 @@ class SkillContractTest(unittest.TestCase):
             "received_like_observed",
             "candidate_observed",
             "scan_issue",
+            "feedback_scan_completed",
             "preview_created",
             "onboarding_approved",
             "outgoing_like_confirmed",
@@ -129,27 +131,42 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn('display_name: "500px Feedback Growth"', text)
         self.assertIn('short_description: "用可归因反馈持续优化 500px 摄影师点赞互动与回馈增长"', text)
         self.assertIn(
-            'default_prompt: "使用 $500px-feedback-growth 冻结当前 5 张公开作品，处理 200 位摄影师，并在每次确认点赞后评论 👍👍👍。"',
+            'default_prompt: "使用 $500px-feedback-growth 扫描本人最新 3 张公开作品，处理 200 位摄影师，并在每次确认点赞后评论 👍👍👍。"',
             text,
         )
         self.assertIn("allow_implicit_invocation: false", text)
 
-    def test_cycle_contract_freezes_five_and_schedules_two_read_only_reviews(self):
+    def test_immediate_feedback_contract_scans_three_and_settles_same_day(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         browser = (ROOT / "references" / "browser-workflow.md").read_text(encoding="utf-8")
-        dashboard = (ROOT / "references" / "dashboard-semantics.md").read_text(encoding="utf-8")
-        recovery = (ROOT / "references" / "operational-recovery.md").read_text(encoding="utf-8")
-
+        schema = (ROOT / "references" / "event-schema.md").read_text(encoding="utf-8")
         for text in (skill, browser):
-            self.assertIn("冻结 5 张", text)
-            self.assertIn("baseline", text)
-        for text in (skill, dashboard, recovery):
-            self.assertIn("+20h", text)
-            self.assertIn("+70h", text)
-            self.assertIn("只读", text)
+            self.assertIn("最新 3 张", text)
+            self.assertIn("200 位", text)
+            self.assertIn("👍👍👍", text)
+            self.assertNotIn("+20h", text)
+            self.assertNotIn("+70h", text)
         self.assertIn("上传和分享由用户手动完成", skill)
-        self.assertIn("+70h 不等于 72 小时成熟", dashboard)
-        self.assertIn("不得创建周期性轮询任务", recovery)
+        self.assertIn("feedback_scan_completed", schema)
+        for quota in ("120", "60", "20"):
+            self.assertIn(quota, skill)
+
+    def test_entrypoint_orders_scan_before_preview_and_run(self):
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        workflow = text.split("## 标准执行顺序", 1)[1].split("## 本人最新 3 张反馈扫描", 1)[0]
+
+        commands = (
+            "doctor",
+            "status --json",
+            "begin --mode preflight",
+            "feedback-scan-complete",
+            "preview --run-id",
+            "begin --mode run --approve-preview",
+            "finish --run-id",
+            "dashboard",
+        )
+        positions = [workflow.index(command) for command in commands]
+        self.assertEqual(positions, sorted(positions))
 
     def test_event_schema_documents_cycle_events(self):
         text = (ROOT / "references" / "event-schema.md").read_text(encoding="utf-8")

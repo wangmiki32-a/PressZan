@@ -16,14 +16,15 @@
 
 | kind | 必填 data 字段 | 可选字段 |
 |---|---|---|
-| `scan_started` | `scan_id`, `owner_id`, `profile_url` | — |
+| `scan_started` | `scan_id`, `owner_id`, `profile_url` | `purpose`；新启动反馈扫描为 `latest_three_feedback` |
 | `work_observed` | `scan_id`, `photo_id`, `photo_url`, `position` | — |
 | `received_like_observed` | `scan_id`, `photo_id`, `work_position`, `photographer_id`, `display_name`, `profile_url` | — |
 | `candidate_observed` | `photographer_id`, `display_name`, `profile_url`, `source_photo_id`, `source_url`, `page_order` | — |
 | `scan_issue` | `scan_id`, `photo_id`, `reason`, `evidence_summary` | — |
+| `feedback_scan_completed` | `scan_id`, `photo_ids`, `completed_photo_ids`, `baseline_photo_ids`, `new_pair_count`, `new_feedback_photographer_count`, `new_feedback_points`, `completed_at` | — |
 | `preview_created` | `preview_id`, `candidate_digest`, `expires_at`, `seed`, `quota_snapshot`, `candidate_ids`, `candidate_plan` | — |
 | `onboarding_approved` | `preview_id`, `candidate_digest`, `approved_at` | — |
-| `outgoing_like_confirmed` | `action_id`, `photographer_id`, `photo_id`, `photo_url`, `quota_bucket`, `before_state`, `after_state` | — |
+| `outgoing_like_confirmed` | `action_id`, `photographer_id`, `photo_id`, `photo_url`, `quota_bucket`, `before_state`, `after_state` | `settlement_mode`；新运行为 `immediate` |
 | `outgoing_comment_confirmed` | `action_id`, `photographer_id`, `photo_id`, `content`, `before_state`, `after_state` | — |
 | `feedback_episode_opened` | `episode_id`, `photographer_id`, `touch_action_id`, `expires_at` | — |
 | `feedback_episode_extended` | `episode_id`, `touch_action_id`, `previous_expires_at`, `expires_at` | — |
@@ -33,7 +34,9 @@
 | `safety_paused` | `reason`, `page_url`, `evidence_summary`, `last_safe_action_id` | — |
 | `run_finished` | `status`, `confirmed_like_count`, `confirmed_comment_count` | — |
 
-### Cycle 与回顾事件
+### Legacy cycle 与回顾事件
+
+以下事件只用于读取旧 sealed logs；新运行不再生成 cycle、episode 或 review 调度。
 
 | kind | 必填 data 字段 |
 |---|---|
@@ -56,20 +59,23 @@
 | `cycle_abandoned` | `cycle_id`, `reason`, `abandoned_at` |
 | `cycle_attribution_scope_mapped` | `cycle_id`, `mapped_run_ids`, `showcase_photo_ids`, `touch_action_ids`, `episode_ids`, `observation_refs`, `attribution_eligible`, `mapping_digest` |
 
-## ID 与自动生命周期
+## ID 与即时生命周期
 
 - 点赞 `action_id = sha256(daily_task_id + photographer_id + photo_id + "outgoing_like_confirmed")`。
-- CLI 收到 `outgoing_like_confirmed` 后自动打开或延长 72 小时 episode；不要另外手工写 opened/extended 事件。
-- CLI 收到新的 `received_like_observed` 后自动关闭符合条件的最近 open episode；不要凭页面猜测手工标记成功。
+- 新 `outgoing_like_confirmed.settlement_mode=immediate` 不创建 episode，当天即成为未反馈轻负样本。旧事件缺少该字段时按 `legacy` 解析并保留原 episode 生命周期。
+- 启动反馈扫描固定本人最新 3 张。首次完整扫描的 `photo_id` 进入 `baseline_photo_ids`；以后相同作品的新 pair 逐条计分，同一触达最多 3 分。
+- `feedback_scan_completed` 的三个 ID 列表必须无重复；`completed_photo_ids` 是 `photo_ids` 子集，`baseline_photo_ids` 是 completed 子集。三个计数字段必须是非负整数，`completed_at` 必须带时区。
+- 不完整扫描也写 summary，但只列实际完成的作品；缺失作品必须有 `scan_issue`，不能按零点赞解释。
+- CLI 从事件重算 `feedback_scan_completed` 全部派生字段并逐项校验；不得手工编辑计数或直接写积分。
 - 相同 action ID 会被拒绝；sealed run 与保留 checkpoint 同时存在时，重建只采用 sealed run。
 - Sealed run 不可恢复，也不可继续向 retained checkpoint 追加事件；`resume` 只接受当前 effective state 中的 active run。
-- `transaction_context` 按事务保存：cycle/run 用 `cycle_id`，review 用 `cycle_id + review_kind + attempt`。Review 可跨日恢复；cycle/migration 超过 24 小时需重算事实。
+- Legacy `transaction_context` 保持可读：cycle/run 用 `cycle_id`，review 用 `cycle_id + review_kind + attempt`。
 - List 字段必须是无重复的非空字符串序列。`review_photo_observed.photographer_ids=[]` 与实际 `liker_count=0` 配套表示“已完整扫描且无人点赞”。
 
 ## 安全值
 
 - `before_state` / `after_state` 必须来自同一可见控件的前后读取。
-- `quota_bucket` 仅用 `exploit_first`、`retest`、`new`、`verified_second`。
+- 新运行的 `quota_bucket` 仅用 `exploit_first`、`new`、`retest`；旧 `verified_second` 只读兼容。
 - 新运行的摄影师覆盖由 `outgoing_like_confirmed` 与 `candidate_skipped` 中不同 `photographer_id` 的并集重建；同一摄影师每天只计一次，恰好 200 位才完成。历史日志中的 `verified_second` 继续可读，新运行不再生成该桶。
 - 新运行每次确认点赞后使用 `outgoing_comment_confirmed` 记录可见的固定评论 `👍👍👍`；历史评论内容保持原样，不补写、不迁移。
 - `safety_paused.reason` 使用可搜索值：`captcha`、`rate_limit`、`login_lost`、`platform_warning`、`account_mismatch`、`ambiguous_state`。
