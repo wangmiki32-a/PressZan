@@ -6,7 +6,8 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from tests import bootstrap  # noqa: F401
-from feedback_growth.model import CheckpointHeader, Event, RunLog
+from feedback_growth import model
+from feedback_growth.model import AggregateState, CheckpointHeader, Event, OutgoingTouch, PhotographerStats, RunLog
 from feedback_growth.store import (
     LogValidationError,
     append_checkpoint,
@@ -59,6 +60,213 @@ def make_log(run_id="run-1"):
 
 
 class StoreTest(unittest.TestCase):
+    def test_legacy_aggregate_constructor_gets_empty_immediate_feedback_state(self):
+        self.assertTrue(hasattr(model, "FeedbackScan"))
+        self.assertTrue(hasattr(model, "TouchFeedbackEvidence"))
+        state = AggregateState({}, frozenset(), {}, None, {}, ())
+
+        self.assertEqual(state.feedback_scans, ())
+        self.assertEqual(state.touch_feedback, {})
+        self.assertEqual(state.baselined_photo_ids, frozenset())
+        touch = OutgoingTouch("a1", "p1", "photo-1", utc(9), "e1", "new")
+        self.assertEqual(touch.settlement_mode, "legacy")
+        stats = PhotographerStats("p1", "p1", "", frozenset(), {}, False, (), (), None, (), 0, 0, False)
+        self.assertEqual(stats.raw_feedback_points, 0)
+        self.assertEqual(stats.effective_feedback_points, 0.0)
+        self.assertIsNone(stats.last_unanswered_touch_at)
+
+    def test_scan_purpose_and_settlement_mode_round_trip(self):
+        scan = Event(
+            "scan_started",
+            utc(9),
+            {
+                "scan_id": "scan-3",
+                "owner_id": "owner-1",
+                "profile_url": "https://example.test/owner",
+                "purpose": "latest_three_feedback",
+            },
+        )
+        touch = Event(
+            "outgoing_like_confirmed",
+            utc(9, 1),
+            {
+                "action_id": "a1",
+                "photographer_id": "p1",
+                "photo_id": "photo-1",
+                "photo_url": "https://example.test/photo-1",
+                "quota_bucket": "new",
+                "before_state": "not_liked",
+                "after_state": "liked",
+                "settlement_mode": "immediate",
+            },
+        )
+        log = replace(make_log("mode-run"), events=(scan, touch))
+
+        with TemporaryDirectory() as directory:
+            path = seal_run(Path(directory), log)
+
+            self.assertEqual(parse_run_log(path).events, (scan, touch))
+
+    def test_feedback_scan_completed_round_trip(self):
+        completed_at = utc(9, 10)
+        item = Event(
+            kind="feedback_scan_completed",
+            occurred_at=completed_at,
+            data={
+                "scan_id": "scan-3",
+                "photo_ids": ["mine-1", "mine-2", "mine-3"],
+                "completed_photo_ids": ["mine-1", "mine-3"],
+                "baseline_photo_ids": ["mine-3"],
+                "new_pair_count": 2,
+                "new_feedback_photographer_count": 1,
+                "new_feedback_points": 2,
+                "completed_at": completed_at.isoformat(),
+            },
+        )
+        log = replace(make_log("scan-run"), events=(item,))
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = seal_run(root, log)
+            rebuilt = parse_run_log(path)
+
+        self.assertEqual(rebuilt.events, (item,))
+
+    def test_feedback_scan_rejects_duplicate_photo_ids(self):
+        completed_at = utc(9, 10)
+        item = Event(
+            kind="feedback_scan_completed",
+            occurred_at=completed_at,
+            data={
+                "scan_id": "scan-3",
+                "photo_ids": ["mine-1", "mine-1", "mine-3"],
+                "completed_photo_ids": ["mine-1"],
+                "baseline_photo_ids": [],
+                "new_pair_count": 0,
+                "new_feedback_photographer_count": 0,
+                "new_feedback_points": 0,
+                "completed_at": completed_at.isoformat(),
+            },
+        )
+        log = replace(make_log("scan-run"), events=(item,))
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(LogValidationError, "photo_ids must contain unique"):
+                seal_run(Path(directory), log)
+
+    def test_feedback_scan_rejects_negative_counts(self):
+        completed_at = utc(9, 10)
+        item = Event(
+            "feedback_scan_completed",
+            completed_at,
+            {
+                "scan_id": "scan-3",
+                "photo_ids": ["mine-1", "mine-2", "mine-3"],
+                "completed_photo_ids": ["mine-1"],
+                "baseline_photo_ids": [],
+                "new_pair_count": -1,
+                "new_feedback_photographer_count": 0,
+                "new_feedback_points": 0,
+                "completed_at": completed_at.isoformat(),
+            },
+        )
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(LogValidationError, "new_pair_count must be a non-negative integer"):
+                seal_run(Path(directory), replace(make_log(), events=(item,)))
+
+    def test_feedback_scan_rejects_baseline_outside_completed_set(self):
+        completed_at = utc(9, 10)
+        item = Event(
+            "feedback_scan_completed",
+            completed_at,
+            {
+                "scan_id": "scan-3",
+                "photo_ids": ["mine-1", "mine-2", "mine-3"],
+                "completed_photo_ids": ["mine-1"],
+                "baseline_photo_ids": ["mine-2"],
+                "new_pair_count": 0,
+                "new_feedback_photographer_count": 0,
+                "new_feedback_points": 0,
+                "completed_at": completed_at.isoformat(),
+            },
+        )
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(LogValidationError, "baseline_photo_ids must be a subset"):
+                seal_run(Path(directory), replace(make_log(), events=(item,)))
+
+    def test_scan_started_rejects_unknown_purpose(self):
+        item = replace(
+            make_log().events[0],
+            data={**make_log().events[0].data, "purpose": "full_history"},
+        )
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(LogValidationError, "invalid scan purpose"):
+                seal_run(Path(directory), replace(make_log(), events=(item,)))
+
+    def test_outgoing_like_rejects_unknown_settlement_mode(self):
+        item = Event(
+            "outgoing_like_confirmed",
+            utc(9),
+            {
+                "action_id": "a1",
+                "photographer_id": "p1",
+                "photo_id": "photo-1",
+                "photo_url": "https://example.test/photo-1",
+                "quota_bucket": "new",
+                "before_state": "not_liked",
+                "after_state": "liked",
+                "settlement_mode": "scheduled",
+            },
+        )
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(LogValidationError, "invalid settlement_mode"):
+                seal_run(Path(directory), replace(make_log(), events=(item,)))
+
+    def test_feedback_scan_rejects_completed_photo_outside_scope(self):
+        completed_at = utc(9, 10)
+        item = Event(
+            "feedback_scan_completed",
+            completed_at,
+            {
+                "scan_id": "scan-3",
+                "photo_ids": ["mine-1", "mine-2", "mine-3"],
+                "completed_photo_ids": ["mine-4"],
+                "baseline_photo_ids": [],
+                "new_pair_count": 0,
+                "new_feedback_photographer_count": 0,
+                "new_feedback_points": 0,
+                "completed_at": completed_at.isoformat(),
+            },
+        )
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(LogValidationError, "completed_photo_ids must be a subset"):
+                seal_run(Path(directory), replace(make_log(), events=(item,)))
+
+    def test_feedback_scan_rejects_naive_completed_at(self):
+        item = Event(
+            "feedback_scan_completed",
+            utc(9, 10),
+            {
+                "scan_id": "scan-3",
+                "photo_ids": ["mine-1", "mine-2", "mine-3"],
+                "completed_photo_ids": [],
+                "baseline_photo_ids": [],
+                "new_pair_count": 0,
+                "new_feedback_photographer_count": 0,
+                "new_feedback_points": 0,
+                "completed_at": "2026-08-12T09:10:00",
+            },
+        )
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(LogValidationError, "completed_at must be timezone-aware"):
+                seal_run(Path(directory), replace(make_log(), events=(item,)))
+
     def test_sealed_log_round_trip(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

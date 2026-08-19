@@ -13,7 +13,7 @@ class LogValidationError(ValueError):
 
 
 _EVENT_FIELDS = {
-    "scan_started": ({"scan_id", "owner_id", "profile_url"}, set()),
+    "scan_started": ({"scan_id", "owner_id", "profile_url"}, {"purpose"}),
     "work_observed": ({"scan_id", "photo_id", "photo_url", "position"}, set()),
     "received_like_observed": (
         {"scan_id", "photo_id", "work_position", "photographer_id", "display_name", "profile_url"},
@@ -24,6 +24,19 @@ _EVENT_FIELDS = {
         set(),
     ),
     "scan_issue": ({"scan_id", "photo_id", "reason", "evidence_summary"}, set()),
+    "feedback_scan_completed": (
+        {
+            "scan_id",
+            "photo_ids",
+            "completed_photo_ids",
+            "baseline_photo_ids",
+            "new_pair_count",
+            "new_feedback_photographer_count",
+            "new_feedback_points",
+            "completed_at",
+        },
+        set(),
+    ),
     "preview_created": (
         {"preview_id", "candidate_digest", "expires_at", "seed", "quota_snapshot", "candidate_ids", "candidate_plan"},
         set(),
@@ -31,7 +44,7 @@ _EVENT_FIELDS = {
     "onboarding_approved": ({"preview_id", "candidate_digest", "approved_at"}, set()),
     "outgoing_like_confirmed": (
         {"action_id", "photographer_id", "photo_id", "photo_url", "quota_bucket", "before_state", "after_state"},
-        set(),
+        {"settlement_mode"},
     ),
     "outgoing_comment_confirmed": (
         {"action_id", "photographer_id", "photo_id", "content", "before_state", "after_state"},
@@ -108,6 +121,8 @@ _UNIQUE_STRING_LIST_FIELDS = {
     "photographer_ids",
     "showcase_photo_ids",
     "observation_refs",
+    "completed_photo_ids",
+    "baseline_photo_ids",
 }
 
 _JSON_FENCE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
@@ -148,6 +163,23 @@ def _validate_event(event: Event, source: Path) -> None:
             raise LogValidationError(f"{field} must be a string list in {source}")
         if len(value) != len(set(value)):
             raise LogValidationError(f"{field} must contain unique values in {source}")
+    if event.kind == "scan_started" and event.data.get("purpose") not in {None, "latest_three_feedback"}:
+        raise LogValidationError(f"invalid scan purpose in {source}")
+    if event.kind == "outgoing_like_confirmed" and event.data.get("settlement_mode") not in {None, "immediate", "legacy"}:
+        raise LogValidationError(f"invalid settlement_mode in {source}")
+    if event.kind == "feedback_scan_completed":
+        for field in ("new_pair_count", "new_feedback_photographer_count", "new_feedback_points"):
+            value = event.data[field]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise LogValidationError(f"{field} must be a non-negative integer in {source}")
+        photo_ids = set(event.data["photo_ids"])
+        completed_photo_ids = set(event.data["completed_photo_ids"])
+        baseline_photo_ids = set(event.data["baseline_photo_ids"])
+        if not completed_photo_ids <= photo_ids:
+            raise LogValidationError(f"completed_photo_ids must be a subset of photo_ids in {source}")
+        if not baseline_photo_ids <= completed_photo_ids:
+            raise LogValidationError(f"baseline_photo_ids must be a subset of completed_photo_ids in {source}")
+        _datetime(event.data["completed_at"], source, "completed_at")
     if event.kind == "cycle_showcase_observed" and event.data["visibility"] != "public":
         raise LogValidationError(f"visibility must be public in {source}")
     _iso(event.occurred_at)

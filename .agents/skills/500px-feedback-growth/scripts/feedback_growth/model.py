@@ -74,6 +74,30 @@ class EpisodeEvidence:
 
 
 @dataclass(frozen=True)
+class FeedbackScan:
+    scan_id: str
+    occurred_at: datetime
+    photo_ids: Tuple[str, ...]
+    completed_photo_ids: FrozenSet[str]
+    baseline_photo_ids: FrozenSet[str]
+    new_pair_count: int
+    new_feedback_photographer_count: int
+    new_feedback_points: int
+    issue_photo_ids: FrozenSet[str]
+
+
+@dataclass(frozen=True)
+class TouchFeedbackEvidence:
+    action_id: str
+    photographer_id: str
+    touch_at: datetime
+    feedback_points: int
+    feedback_first_seen_at: Optional[datetime]
+    unanswered: bool
+    settlement_mode: str
+
+
+@dataclass(frozen=True)
 class FeedbackCycle:
     cycle_id: str
     attribution_eligible: bool
@@ -121,6 +145,15 @@ class PhotographerStats:
     success_count_30d: int
     failure_count: int
     dormant_retest_eligible: bool
+    raw_feedback_points: int = 0
+    feedback_points_30d: int = 0
+    touch_count: int = 0
+    touch_count_30d: int = 0
+    unanswered_touch_count_30d: int = 0
+    effective_feedback_points: float = 0.0
+    effective_unanswered_touches: float = 0.0
+    last_feedback_at: Optional[datetime] = None
+    last_unanswered_touch_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -144,8 +177,9 @@ class OutgoingTouch:
     photographer_id: str
     photo_id: str
     occurred_at: datetime
-    episode_id: str
+    episode_id: Optional[str]
     quota_bucket: str
+    settlement_mode: str = "legacy"
 
 
 @dataclass(frozen=True)
@@ -158,6 +192,9 @@ class AggregateState:
     outgoing_touches: Tuple[OutgoingTouch, ...]
     cycles: Mapping[str, FeedbackCycle] = field(default_factory=dict)
     latest_cycle_id: Optional[str] = None
+    feedback_scans: Tuple[FeedbackScan, ...] = ()
+    touch_feedback: Mapping[str, TouchFeedbackEvidence] = field(default_factory=dict)
+    baselined_photo_ids: FrozenSet[str] = frozenset()
 
 
 @dataclass(frozen=True)
