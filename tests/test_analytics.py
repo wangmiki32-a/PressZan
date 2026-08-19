@@ -3,6 +3,7 @@ import hashlib
 import unittest
 
 from tests import bootstrap  # noqa: F401
+from feedback_growth import analytics
 from feedback_growth.analytics import (
     StateValidationError,
     beta_parameters,
@@ -12,7 +13,7 @@ from feedback_growth.analytics import (
     rebuild_state,
 )
 from feedback_growth.model import RunLog
-from tests.helpers import confirmed_like, dt, event, opened, received, run
+from tests.helpers import confirmed_like, dt, event, immediate_like, latest_three_scan, opened, received, run
 
 
 NOW = dt()
@@ -43,6 +44,169 @@ def failed(event_time, episode, expires_at):
 
 
 class AnalyticsTest(unittest.TestCase):
+    def test_three_new_works_give_three_points_and_clear_negative(self):
+        baseline_at = dt(18, 8)
+        touch_at = dt(18, 10)
+        feedback_at = dt(19, 8)
+        events = latest_three_scan(
+            "base",
+            baseline_at,
+            baseline_photo_ids=("mine-1", "mine-2", "mine-3"),
+        )
+        events.append(immediate_like("a1", "p1", touch_at))
+        events.extend(
+            latest_three_scan(
+                "next",
+                feedback_at,
+                (("mine-1", "p1"), ("mine-2", "p1"), ("mine-3", "p1")),
+                new_pair_count=3,
+                new_feedback_photographer_count=1,
+                new_feedback_points=3,
+            )
+        )
+
+        state = rebuild_state([run(events, day="2026-08-19")], feedback_at)
+
+        evidence = state.touch_feedback["a1"]
+        self.assertEqual(evidence.feedback_points, 3)
+        self.assertFalse(evidence.unanswered)
+        self.assertEqual(state.photographers["p1"].raw_feedback_points, 3)
+        self.assertEqual(classify_photographer(state.photographers["p1"], feedback_at), "verified")
+
+    def test_one_and_two_new_works_award_depth_points(self):
+        for count in (1, 2):
+            with self.subTest(count=count):
+                baseline_at = dt(18, 8)
+                touch_at = dt(18, 10)
+                feedback_at = dt(19, 8)
+                events = latest_three_scan(
+                    "base",
+                    baseline_at,
+                    baseline_photo_ids=("mine-1", "mine-2", "mine-3"),
+                )
+                events.append(immediate_like("a1", "p1", touch_at))
+                observations = tuple((f"mine-{index}", "p1") for index in range(1, count + 1))
+                events.extend(
+                    latest_three_scan(
+                        "next",
+                        feedback_at,
+                        observations,
+                        new_pair_count=count,
+                        new_feedback_photographer_count=1,
+                        new_feedback_points=count,
+                    )
+                )
+
+                state = rebuild_state([run(events, day="2026-08-19")], feedback_at)
+
+                self.assertEqual(state.touch_feedback["a1"].feedback_points, count)
+
+    def test_repeated_pair_does_not_award_twice(self):
+        baseline_at = dt(17, 8)
+        touch_at = dt(17, 10)
+        first_feedback = dt(18, 8)
+        repeated = dt(19, 8)
+        events = latest_three_scan("base", baseline_at, baseline_photo_ids=("mine-1", "mine-2", "mine-3"))
+        events.append(immediate_like("a1", "p1", touch_at))
+        events.extend(latest_three_scan("first", first_feedback, (("mine-1", "p1"),), new_pair_count=1, new_feedback_photographer_count=1, new_feedback_points=1))
+        events.extend(latest_three_scan("repeat", repeated, (("mine-1", "p1"),)))
+
+        state = rebuild_state([run(events, day="2026-08-19")], repeated)
+
+        self.assertEqual(state.touch_feedback["a1"].feedback_points, 1)
+        self.assertEqual(state.feedback_scans[-1].new_feedback_points, 0)
+
+    def test_first_complete_scan_only_establishes_baseline(self):
+        baseline_at = dt(18, 8)
+        touch_at = dt(18, 10)
+        observations = (("mine-1", "p1"), ("mine-2", "p1"))
+        events = [immediate_like("a1", "p1", touch_at)]
+        events.extend(
+            latest_three_scan(
+                "base",
+                dt(19, 8),
+                observations,
+                baseline_photo_ids=("mine-1", "mine-2", "mine-3"),
+            )
+        )
+
+        state = rebuild_state([run(events, day="2026-08-19")], dt(19, 8))
+
+        self.assertEqual(state.touch_feedback["a1"].feedback_points, 0)
+        self.assertTrue(state.touch_feedback["a1"].unanswered)
+        self.assertEqual(state.baselined_photo_ids, frozenset({"mine-1", "mine-2", "mine-3"}))
+
+    def test_incomplete_photo_does_not_establish_baseline(self):
+        first_scan = dt(18, 8)
+        second_scan = dt(19, 8)
+        events = latest_three_scan(
+            "partial",
+            first_scan,
+            (("mine-3", "p1"),),
+            completed_photo_ids=("mine-1", "mine-2"),
+            baseline_photo_ids=("mine-1", "mine-2"),
+        )
+        events.extend(
+            latest_three_scan(
+                "complete",
+                second_scan,
+                (("mine-3", "p1"),),
+                completed_photo_ids=("mine-1", "mine-2", "mine-3"),
+                baseline_photo_ids=("mine-3",),
+            )
+        )
+
+        state = rebuild_state([run(events, day="2026-08-19")], second_scan)
+
+        self.assertEqual(state.feedback_scans[0].baseline_photo_ids, frozenset({"mine-1", "mine-2"}))
+        self.assertEqual(state.feedback_scans[1].baseline_photo_ids, frozenset({"mine-3"}))
+        self.assertEqual(state.feedback_scans[1].new_feedback_points, 0)
+
+    def test_full_latest_touch_does_not_backfill_older_touch(self):
+        older_touch = dt(15, 8)
+        newer_touch = dt(16, 8)
+        legacy_feedback = newer_touch + timedelta(hours=1)
+        baseline_at = dt(17, 8)
+        scan_at = dt(18, 8)
+        ep = episode_id("p1", "a2")
+        events = [
+            immediate_like("a1", "p1", older_touch),
+            confirmed_like("a2", "p1", newer_touch),
+            opened(ep, "p1", "a2", newer_touch, newer_touch + timedelta(hours=72)),
+            received("legacy-mine", "p1", legacy_feedback),
+            success(legacy_feedback, ep, "legacy-mine", count=3),
+        ]
+        events.extend(latest_three_scan("base", baseline_at, baseline_photo_ids=("mine-1", "mine-2", "mine-3")))
+        events.extend(latest_three_scan("next", scan_at, (("mine-1", "p1"),), new_pair_count=1))
+
+        state = rebuild_state([run(events, day="2026-08-19")], scan_at)
+
+        self.assertEqual(state.touch_feedback["a2"].feedback_points, 3)
+        self.assertEqual(state.touch_feedback["a1"].feedback_points, 0)
+        self.assertTrue(state.touch_feedback["a1"].unanswered)
+        self.assertEqual(state.feedback_scans[-1].new_feedback_points, 0)
+
+    def test_build_feedback_scan_completed_event_uses_same_ledger(self):
+        baseline_at = dt(18, 8)
+        touch_at = dt(18, 10)
+        feedback_at = dt(19, 8)
+        events = latest_three_scan("base", baseline_at, baseline_photo_ids=("mine-1", "mine-2", "mine-3"))
+        events.append(immediate_like("a1", "p1", touch_at))
+        events.extend(latest_three_scan("next", feedback_at, (("mine-1", "p1"), ("mine-2", "p1")), include_summary=False))
+        logs = [run(events, day="2026-08-19", status="active")]
+
+        self.assertTrue(hasattr(analytics, "build_feedback_scan_completed_event"))
+        completed = analytics.build_feedback_scan_completed_event(
+            logs,
+            "next",
+            ("mine-1", "mine-2", "mine-3"),
+            feedback_at,
+        )
+
+        self.assertEqual(completed.data["baseline_photo_ids"], [])
+        self.assertEqual(completed.data["new_pair_count"], 2)
+        self.assertEqual(completed.data["new_feedback_photographer_count"], 1)
+        self.assertEqual(completed.data["new_feedback_points"], 2)
     def test_daily_coverage_unions_confirmed_likes_and_skips_by_photographer(self):
         touched_at = NOW - timedelta(hours=1)
         episode = episode_id("p1", "a1")
@@ -236,7 +400,7 @@ class AnalyticsTest(unittest.TestCase):
 
         self.assertEqual(state.daily_tasks["2026-08-12"].status, "incomplete_candidate_exhausted")
 
-    def test_two_recent_successes_are_verified(self):
+    def test_two_recent_one_point_successes_are_promising(self):
         events = []
         for index, days in enumerate((20, 5), start=1):
             touch = NOW - timedelta(days=days)
@@ -251,11 +415,12 @@ class AnalyticsTest(unittest.TestCase):
             ])
         state = rebuild_state([run(events)], NOW)
 
-        self.assertEqual(classify_photographer(state.photographers["p1"], NOW), "verified")
+        self.assertEqual(state.photographers["p1"].feedback_points_30d, 2)
+        self.assertEqual(classify_photographer(state.photographers["p1"], NOW), "promising")
 
     def test_dormant_cooldown_retest_boundary(self):
         events = []
-        for index, days in enumerate((35, 32), start=1):
+        for index, days in enumerate((20, 15, 6), start=1):
             touch = NOW - timedelta(days=days)
             action = f"a{index}"
             ep = episode_id("p1", action)
@@ -270,7 +435,7 @@ class AnalyticsTest(unittest.TestCase):
 
         self.assertEqual(classify_photographer(stats, NOW), "dormant")
         self.assertFalse(stats.dormant_retest_eligible)
-        later = NOW + timedelta(days=30)
+        later = NOW + timedelta(days=1)
         rebuilt = rebuild_state([run(events)], later)
         self.assertTrue(rebuilt.photographers["p1"].dormant_retest_eligible)
 
@@ -285,4 +450,49 @@ class AnalyticsTest(unittest.TestCase):
 
         self.assertTrue(stats.historical_high_potential)
         self.assertEqual(stats.success_count_30d, 0)
-        self.assertEqual(beta_parameters(stats, NOW), (1.5, 1.0))
+        self.assertEqual(beta_parameters(stats, NOW), (1.0, 1.0))
+
+    def test_legacy_success_caps_at_three_points_and_open_is_negative(self):
+        success_touch = NOW - timedelta(days=5)
+        open_touch = NOW - timedelta(days=1)
+        success_episode = episode_id("p1", "a1")
+        open_episode = episode_id("p1", "a2")
+        feedback = success_touch + timedelta(hours=1)
+        events = [
+            confirmed_like("a1", "p1", success_touch),
+            opened(success_episode, "p1", "a1", success_touch, success_touch + timedelta(hours=72)),
+            received("mine-1", "p1", feedback),
+            success(feedback, success_episode, "mine-1", count=5),
+            confirmed_like("a2", "p1", open_touch),
+            opened(open_episode, "p1", "a2", open_touch, open_touch + timedelta(hours=72)),
+        ]
+
+        state = rebuild_state([run(events)], NOW)
+
+        self.assertEqual(state.touch_feedback["a1"].feedback_points, 3)
+        self.assertFalse(state.touch_feedback["a1"].unanswered)
+        self.assertTrue(state.touch_feedback["a2"].unanswered)
+        self.assertEqual(state.photographers["p1"].raw_feedback_points, 3)
+
+    def test_effective_feedback_points_cap_at_twelve(self):
+        events = []
+        for index in range(5):
+            touch = NOW - timedelta(hours=10 - index)
+            action = f"a{index}"
+            ep = episode_id("p1", action)
+            feedback = touch + timedelta(minutes=10)
+            events.extend(
+                [
+                    confirmed_like(action, "p1", touch),
+                    opened(ep, "p1", action, touch, touch + timedelta(hours=72)),
+                    received(f"mine-{index}", "p1", feedback),
+                    success(feedback, ep, f"mine-{index}", count=3),
+                ]
+            )
+
+        state = rebuild_state([run(events)], NOW)
+        stats = state.photographers["p1"]
+
+        self.assertEqual(stats.raw_feedback_points, 15)
+        self.assertEqual(stats.effective_feedback_points, 12.0)
+        self.assertEqual(beta_parameters(stats, NOW)[0], 13.0)
