@@ -5,10 +5,11 @@ from unittest.mock import patch
 import unittest
 
 from tests import bootstrap  # noqa: F401
+from feedback_growth.analytics import rebuild_state
 from feedback_growth.cli import _candidates
 from feedback_growth.model import AggregateState, Candidate, Event, PhotographerStats
 from feedback_growth.selector import DAILY_TARGET, select_run_candidates
-from tests.helpers import dt
+from tests.helpers import dt, event, run
 
 
 NOW = dt()
@@ -105,6 +106,25 @@ class SelectorTest(unittest.TestCase):
         self.assertEqual(len(set(ids)), 200)
         self.assertNotIn("verified_second", buckets)
         self.assertEqual(result.status, "daily_complete")
+
+    def test_skipped_coverage_consumes_bucket_before_next_selection(self):
+        skip_events = [
+            event(
+                "candidate_skipped",
+                NOW + timedelta(seconds=index),
+                photographer_id=f"covered-{index:03}",
+                reason="already_liked",
+                quota_bucket="exploit_first",
+            )
+            for index in range(120)
+        ]
+        state = rebuild_state([run(skip_events, status="active")], NOW + timedelta(minutes=3))
+        candidates = [candidate("exploit", "verified", 1), candidate("fresh", "new", 2)]
+
+        result = select_run_candidates(candidates, state, NOW + timedelta(minutes=3), seed=1, limit=1)
+
+        self.assertEqual(result.selected[0]["photographer_id"], "fresh")
+        self.assertEqual(result.selected[0]["bucket"], "new")
 
     def test_cooled_dormant_is_retest_not_new_exploration(self):
         item = candidate("r1", "dormant", 1, True)

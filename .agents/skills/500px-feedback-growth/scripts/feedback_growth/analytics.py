@@ -79,33 +79,35 @@ def _immutable_episode(episode: _Episode) -> FeedbackEpisode:
     )
 
 
-def _scan_facts(ordered) -> Mapping[str, Mapping[str, object]]:
-    immediate_ids = {
-        str(row[4].data["scan_id"])
+def _scan_facts(ordered) -> Mapping[Tuple[str, str], Mapping[str, object]]:
+    immediate_keys = {
+        (str(row[1]), str(row[4].data["scan_id"]))
         for row in ordered
         if row[4].kind == "scan_started" and row[4].data.get("purpose") == "latest_three_feedback"
     }
-    facts: Dict[str, Dict[str, object]] = {
-        scan_id: {"works": [], "observations": [], "issues": set(), "summary": None}
-        for scan_id in immediate_ids
+    facts: Dict[Tuple[str, str], Dict[str, object]] = {
+        key: {"works": [], "observations": [], "issues": set(), "summary": None}
+        for key in immediate_keys
     }
     for row in ordered:
+        run_id = str(row[1])
         item = row[4]
         scan_id = str(item.data.get("scan_id", ""))
-        if scan_id not in facts:
+        key = (run_id, scan_id)
+        if key not in facts:
             continue
         if item.kind == "work_observed":
-            facts[scan_id]["works"].append((int(item.data["position"]), str(item.data["photo_id"])))
+            facts[key]["works"].append((int(item.data["position"]), str(item.data["photo_id"])))
         elif item.kind == "received_like_observed":
-            facts[scan_id]["observations"].append(
+            facts[key]["observations"].append(
                 (str(item.data["photo_id"]), str(item.data["photographer_id"]), item.occurred_at)
             )
         elif item.kind == "scan_issue":
-            facts[scan_id]["issues"].add(str(item.data["photo_id"]))
+            facts[key]["issues"].add(str(item.data["photo_id"]))
         elif item.kind == "feedback_scan_completed":
-            if facts[scan_id]["summary"] is not None:
-                raise StateValidationError(f"duplicate feedback scan completion {scan_id}")
-            facts[scan_id]["summary"] = item
+            if facts[key]["summary"] is not None:
+                raise StateValidationError(f"duplicate feedback scan completion {run_id}/{scan_id}")
+            facts[key]["summary"] = item
     return facts
 
 
@@ -230,6 +232,7 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
     daily_comments: MutableMapping[str, List[Event]] = defaultdict(list)
     daily_skips: MutableMapping[str, Counter] = defaultdict(Counter)
     daily_skipped_photographers: MutableMapping[str, set] = defaultdict(set)
+    daily_coverage_buckets: MutableMapping[str, Dict[str, str]] = defaultdict(dict)
     daily_risks: MutableMapping[str, List[Mapping[str, str]]] = defaultdict(list)
     last_comment: Dict[str, datetime] = {}
     paused_reason = None
@@ -242,7 +245,7 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
             pair = (photo_id, photographer_id)
             profile_names[photographer_id] = str(data["display_name"])
             profile_urls[photographer_id] = str(data["profile_url"])
-            if str(data["scan_id"]) in scan_facts:
+            if (_run_id, str(data["scan_id"])) in scan_facts:
                 continue
             if pair in known_pairs:
                 continue
@@ -272,8 +275,10 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
                 raise StateValidationError(f"unconfirmed outgoing like {action_id}")
             actions[action_id] = (item, daily_task_id)
             daily_likes[daily_task_id].append(item)
-            profile_names.setdefault(str(data["photographer_id"]), str(data["photographer_id"]))
-            profile_urls.setdefault(str(data["photographer_id"]), "")
+            photographer_id = str(data["photographer_id"])
+            daily_coverage_buckets[daily_task_id].setdefault(photographer_id, str(data["quota_bucket"]))
+            profile_names.setdefault(photographer_id, photographer_id)
+            profile_urls.setdefault(photographer_id, "")
         elif item.kind == "feedback_episode_opened":
             action_id = str(data["touch_action_id"])
             if action_id not in actions:
@@ -341,7 +346,10 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
             last_comment[str(data["photographer_id"])] = occurred_at
         elif item.kind == "candidate_skipped":
             daily_skips[daily_task_id][str(data["reason"])] += 1
-            daily_skipped_photographers[daily_task_id].add(str(data["photographer_id"]))
+            photographer_id = str(data["photographer_id"])
+            daily_skipped_photographers[daily_task_id].add(photographer_id)
+            if data.get("quota_bucket"):
+                daily_coverage_buckets[daily_task_id].setdefault(photographer_id, str(data["quota_bucket"]))
         elif item.kind == "safety_paused":
             paused_reason = str(data["reason"])
             daily_risks[daily_task_id].append(
@@ -400,11 +408,11 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
     baselined_photo_ids = set()
     feedback_scans = []
     completed_scans = [
-        (facts["summary"].occurred_at, scan_id, facts)
-        for scan_id, facts in scan_facts.items()
+        (facts["summary"].occurred_at, run_id, scan_id, facts)
+        for (run_id, scan_id), facts in scan_facts.items()
         if facts["summary"] is not None
     ]
-    for completed_at, scan_id, facts in sorted(completed_scans, key=lambda row: (row[0], row[1])):
+    for completed_at, _run_id, scan_id, facts in sorted(completed_scans, key=lambda row: (row[0], row[1], row[2])):
         summary = facts["summary"]
         declared_completed_at = _parse_time(summary.data["completed_at"], "completed_at")
         if declared_completed_at != completed_at:
@@ -516,7 +524,7 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
     all_days = set(run_status) | preflight_days | set(daily_likes) | set(daily_comments) | set(daily_skips) | set(daily_risks)
     for day in all_days:
         likes = daily_likes.get(day, [])
-        quota_counts = Counter(str(item.data["quota_bucket"]) for item in likes)
+        quota_counts = Counter(daily_coverage_buckets.get(day, {}).values())
         unique = frozenset(str(item.data["photographer_id"]) for item in likes)
         covered = frozenset(set(unique) | daily_skipped_photographers.get(day, set()))
         latest_run_status = run_status[day][2] if day in run_status else None
@@ -567,6 +575,7 @@ def rebuild_state(logs: Iterable[RunLog], now: datetime) -> AggregateState:
 
 def build_feedback_scan_completed_event(
     logs: Iterable[RunLog],
+    run_id: str,
     scan_id: str,
     completed_photo_ids: Sequence[str],
     now: datetime,
@@ -580,9 +589,10 @@ def build_feedback_scan_completed_event(
     ]
     ordered.sort(key=lambda row: (row[0], row[1], row[2]))
     facts_by_scan = _scan_facts(ordered)
-    if scan_id not in facts_by_scan:
+    key = (run_id, scan_id)
+    if key not in facts_by_scan:
         raise StateValidationError(f"feedback scan {scan_id} not found")
-    facts = facts_by_scan[scan_id]
+    facts = facts_by_scan[key]
     if facts["summary"] is not None:
         raise StateValidationError(f"feedback scan {scan_id} already completed")
     touch_feedback = dict(state.touch_feedback)

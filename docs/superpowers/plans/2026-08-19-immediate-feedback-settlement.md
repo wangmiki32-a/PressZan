@@ -200,7 +200,7 @@ git commit -m "feat: add immediate feedback scan events"
 
 **Interfaces:**
 - Consumes: Task 1 的 `FeedbackScan`、`TouchFeedbackEvidence` 与新事件字段。
-- Produces: `build_feedback_scan_completed_event(logs, scan_id, completed_photo_ids, now) -> Event`。
+- Produces: `build_feedback_scan_completed_event(logs, run_id, scan_id, completed_photo_ids, now) -> Event`。
 - Produces: `rebuild_state(...).touch_feedback`，每个新触达为 0–3 分且最多一个轻负样本。
 - Produces: `classify_photographer(stats, now) -> str` 与 `beta_parameters(stats, now) -> Tuple[float, float]` 的新语义。
 
@@ -507,6 +507,7 @@ def command_feedback_scan_complete(args) -> int:
     try:
         completed = build_feedback_scan_completed_event(
             load_effective_runs(root),
+            args.run_id,
             args.scan_id,
             tuple(args.completed_photo_id),
             now,

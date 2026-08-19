@@ -13,7 +13,7 @@
 3. 逐张打开点赞者列表并完整读取稳定摄影师 ID。每个 pair 写 `received_like_observed`；零点赞也必须以该作品列入 `feedback-scan-complete --completed-photo-id` 表达完整扫描。
 4. 某张加载失败只刷新一次；仍失败写 `scan_issue`，不要把该作品列为 completed，也不要把缺失数据解释成零点赞。
 5. 首次完整读取某张作品只建立 baseline。后续扫描由 CLI 对此前未见 pair 逐张计分；浏览器层不得手工判断或回填反馈分。
-6. 3/3 完成后再进入候选 preflight。部分扫描可以封存已完成证据，但本次状态必须明确为“数据不完整”。
+6. 无论是否 3/3，写入本次 `feedback_scan_completed` 后都可进入候选 preflight；部分扫描必须明确为“数据不完整”，缺失作品不按零反馈，并且不阻止本轮互动。
 
 ## Preflight：只读候选扫描
 
@@ -33,7 +33,7 @@
 ## 点赞执行
 
 1. 优先选择本地高分队列；当前评论链可继续时，选择当日尚未覆盖且采样得分最高的人。得分差不超过 0.05 时按页面顺序选第一位。
-2. 打开候选主页后只检查当前第一张作品，不扫描其余作品。第一张已点赞记录 `latest_work_already_liked`；不可读记录 `latest_work_unavailable`。两种跳过都计入覆盖。
+2. 打开候选主页后只检查当前第一张作品，不扫描其余作品。第一张已点赞记录 `latest_work_already_liked`；不可读记录 `latest_work_unavailable`。两种 `candidate_skipped` 都写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖。
 3. 点赞前读取 `before_state=not_liked`。点击一次后重新读取同一控件；仅在 `after_state=liked` 可见时记录 `outgoing_like_confirmed`。状态不明确时不重按。
 4. 每次确认点赞后，在同一作品评论 `👍👍👍`。先检查当前账号是否已有完全相同的可见评论；没有时只提交一次，文本可见后记录 `outgoing_comment_confirmed`。评论区不可用或状态不明确时立即安全暂停。
 5. 成功或跳过后可从当前作品评论区选择下一位；链路不足时从本地高分队列重新播种。每位摄影师每天只处理一次。

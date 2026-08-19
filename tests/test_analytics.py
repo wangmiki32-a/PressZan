@@ -198,6 +198,7 @@ class AnalyticsTest(unittest.TestCase):
         self.assertTrue(hasattr(analytics, "build_feedback_scan_completed_event"))
         completed = analytics.build_feedback_scan_completed_event(
             logs,
+            "run-1",
             "next",
             ("mine-1", "mine-2", "mine-3"),
             feedback_at,
@@ -207,14 +208,49 @@ class AnalyticsTest(unittest.TestCase):
         self.assertEqual(completed.data["new_pair_count"], 2)
         self.assertEqual(completed.data["new_feedback_photographer_count"], 1)
         self.assertEqual(completed.data["new_feedback_points"], 2)
+
+    def test_feedback_scan_id_is_scoped_to_its_run(self):
+        first_at = dt(18, 8)
+        second_at = dt(19, 8)
+        first = run(
+            latest_three_scan(
+                "shared",
+                first_at,
+                baseline_photo_ids=("mine-1", "mine-2", "mine-3"),
+            ),
+            run_id="scan-run-1",
+            day="2026-08-18",
+        )
+        second = run(
+            latest_three_scan("shared", second_at),
+            run_id="scan-run-2",
+            day="2026-08-19",
+        )
+
+        state = rebuild_state([first, second], second_at)
+
+        self.assertEqual([scan.scan_id for scan in state.feedback_scans], ["shared", "shared"])
+
     def test_daily_coverage_unions_confirmed_likes_and_skips_by_photographer(self):
         touched_at = NOW - timedelta(hours=1)
         episode = episode_id("p1", "a1")
         events = [
             confirmed_like("a1", "p1", touched_at),
             opened(episode, "p1", "a1", touched_at, touched_at + timedelta(hours=72)),
-            event("candidate_skipped", touched_at + timedelta(minutes=1), photographer_id="p2", reason="already_liked"),
-            event("candidate_skipped", touched_at + timedelta(minutes=2), photographer_id="p1", reason="already_liked"),
+            event(
+                "candidate_skipped",
+                touched_at + timedelta(minutes=1),
+                photographer_id="p2",
+                reason="already_liked",
+                quota_bucket="new",
+            ),
+            event(
+                "candidate_skipped",
+                touched_at + timedelta(minutes=2),
+                photographer_id="p1",
+                reason="already_liked",
+                quota_bucket="retest",
+            ),
         ]
 
         state = rebuild_state([run(events, status="active")], NOW)
@@ -222,6 +258,7 @@ class AnalyticsTest(unittest.TestCase):
         daily = state.daily_tasks["2026-08-12"]
         self.assertEqual(daily.covered_photographer_ids, frozenset({"p1", "p2"}))
         self.assertEqual(daily.confirmed_likes, 1)
+        self.assertEqual(daily.quota_counts, {"exploit_first": 1, "new": 1})
 
     def test_future_100_like_day_is_not_complete_before_200_photographers(self):
         started = dt(18, 1)

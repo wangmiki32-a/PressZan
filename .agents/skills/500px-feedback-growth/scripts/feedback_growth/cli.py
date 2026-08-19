@@ -451,11 +451,14 @@ def command_event(args) -> int:
             return _error("photographer_already_covered", photographer_id=photographer_id)
         if daily and _remaining_photographer_quota(daily) == 0:
             return _error("daily_complete")
-    if args.kind == "outgoing_like_confirmed" and data["settlement_mode"] == "legacy":
+    if args.kind == "candidate_skipped" and data.get("quota_bucket") not in {"exploit_first", "new", "retest"}:
+        return _error("invalid_quota_bucket", expected=["exploit_first", "new", "retest"])
+    if args.kind == "outgoing_like_confirmed":
         day = checkpoint.header.daily_task_id
         expected_action = _action_id(day, str(data["photographer_id"]), str(data["photo_id"]), args.kind)
         if data.get("action_id") != expected_action:
             return _error("invalid_action_id", expected=expected_action)
+    if args.kind == "outgoing_like_confirmed" and data["settlement_mode"] == "legacy":
         open_episodes = [
             item
             for item in state.episodes.values()
@@ -529,6 +532,7 @@ def command_feedback_scan_complete(args) -> int:
     try:
         completed = build_feedback_scan_completed_event(
             load_effective_runs(root),
+            args.run_id,
             args.scan_id,
             tuple(args.completed_photo_id),
             now,

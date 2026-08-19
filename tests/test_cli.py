@@ -270,6 +270,65 @@ class CliTest(unittest.TestCase):
             self.assertEqual(checkpoint.events[-1].data["settlement_mode"], "immediate")
             self.assertFalse(any(item.kind.startswith("feedback_episode_") for item in checkpoint.events))
 
+    def test_immediate_like_rejects_non_deterministic_action_id(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            preview = create_preview(root, "2026-08-19T08:00:00+00:00")
+            result, begun = invoke(
+                root,
+                "begin",
+                "--mode", "run",
+                "--approve-preview", preview["preview_id"],
+                "--now", "2026-08-19T09:00:00+00:00",
+            )
+            self.assertEqual(result.returncode, 0, begun)
+
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id", begun["run_id"],
+                "--kind", "outgoing_like_confirmed",
+                "--field", "action_id=arbitrary",
+                "--field", "photographer_id=p1",
+                "--field", "photo_id=photo-1",
+                "--field", "photo_url=https://500px.test/photo/photo-1",
+                "--field", "quota_bucket=new",
+                "--field", "before_state=not_liked",
+                "--field", "after_state=liked",
+                "--now", "2026-08-19T09:01:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "invalid_action_id")
+            self.assertEqual(read_checkpoint(root, begun["run_id"]).events, ())
+
+    def test_candidate_skip_requires_approved_quota_bucket(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            preview = create_preview(root, "2026-08-19T08:00:00+00:00")
+            result, begun = invoke(
+                root,
+                "begin",
+                "--mode", "run",
+                "--approve-preview", preview["preview_id"],
+                "--now", "2026-08-19T09:00:00+00:00",
+            )
+            self.assertEqual(result.returncode, 0, begun)
+
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id", begun["run_id"],
+                "--kind", "candidate_skipped",
+                "--field", "photographer_id=p1",
+                "--field", "reason=latest_work_already_liked",
+                "--now", "2026-08-19T09:01:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "invalid_quota_bucket")
+            self.assertEqual(read_checkpoint(root, begun["run_id"]).events, ())
+
     def test_begin_does_not_materialize_expired_legacy_failures(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

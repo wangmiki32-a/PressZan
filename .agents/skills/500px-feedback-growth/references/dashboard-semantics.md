@@ -8,7 +8,7 @@ Dashboard 只消费事件日志重建的聚合状态，不保存业务状态，�
 2. 最新反馈扫描：按 `(occurred_at, scan_id)` 取最新 `feedback_scan_completed`，显示完成作品数、新 pair、反馈摄影师和反馈分。
 3. 滚动 30 天表现：显示触达次数、覆盖摄影师、有反馈摄影师、原始反馈分和未反馈触达。
 4. 关系分层与排行：固定显示 verified、promising、dormant、new；排行先按有效反馈分，再按原始累计分。
-5. 策略配额：计划固定为 `120 exploit_first / 60 new / 20 retest`，同时显示实际值、缺口和回填。
+5. 策略配额：计划固定为 `120 exploit_first / 60 new / 20 retest`；实际值按点赞或跳过产生的首次摄影师覆盖计数，同时显示缺口和回填。
 
 旧 100 赞或旧 200 覆盖任务继续出现在已完成历史中，但 cycle、双 review、观察窗口和延迟不再是主视图。
 

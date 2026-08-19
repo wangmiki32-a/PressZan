@@ -54,7 +54,7 @@ Windows 原生 Codex 使用同参数启动器：
 2. 从本人主页确认账号和最新 3 张公开作品，逐张记录 `work_observed` 并完整读取点赞者。
 3. 首次读取某张作品只建立 baseline；后续扫描只对此前未见 pair 计分。
 4. 每张加载失败最多刷新一次。仍失败写 `scan_issue`，不要把它列为 completed 或按零点赞处理。
-5. 使用 `feedback-scan-complete` 生成重建器校验过的 summary。3/3 才进入正常候选流程；部分完成封存为数据不完整。
+5. 使用 `feedback-scan-complete` 生成重建器校验过的 summary。部分完成封存为“数据不完整”，但不阻止本轮互动；summary 写入后可继续正常候选流程。
 
 ### Preflight
 
@@ -71,7 +71,7 @@ Windows 原生 Codex 使用同参数启动器：
 ### 点赞执行
 
 1. 候选主页只检查当前第一张作品。
-2. 已点赞或不可读时记录 `candidate_skipped` 并计覆盖；未点赞才点击。
+2. 已点赞或不可读时记录 `candidate_skipped`，写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖；未点赞才点击。
 3. 只接受同一控件 `before_state=not_liked -> after_state=liked`。
 4. 页面确认后立即追加 `outgoing_like_confirmed`；新运行自动使用 `settlement_mode=immediate`。
 5. 每次确认点赞后评论 `👍👍👍`；相同本人评论已可见时不重复，新增评论可见后才记录。

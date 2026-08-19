@@ -38,7 +38,7 @@ flowchart LR
 
 ### 展示层
 
-`dashboard.py` 从聚合状态生成自包含 HTML，不加载远程资源或保存独立业务状态。主视图是当前任务、最新反馈扫描、滚动 30 天表现、关系分层/排行和策略配额；旧 cycle/review 不进入主指标。完整口径见 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。
+`dashboard.py` 从聚合状态生成自包含 HTML，不加载远程资源或保存独立业务状态。主视图是当前任务、最新反馈扫描、滚动 30 天表现、关系分层/排行和策略配额；策略实际值按点赞或跳过产生的首次摄影师覆盖统计。旧 cycle/review 不进入主指标。完整口径见 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。
 
 ## 事实源层级
 

@@ -57,7 +57,7 @@ _EVENT_FIELDS = {
         set(),
     ),
     "feedback_episode_failed": ({"episode_id", "expired_at"}, set()),
-    "candidate_skipped": ({"photographer_id", "reason"}, {"photo_id"}),
+    "candidate_skipped": ({"photographer_id", "reason"}, {"photo_id", "quota_bucket"}),
     "safety_paused": ({"reason", "page_url", "evidence_summary", "last_safe_action_id"}, set()),
     "run_finished": ({"status", "confirmed_like_count", "confirmed_comment_count"}, set()),
     "cycle_started": ({"cycle_id", "attribution_eligible"}, set()),
