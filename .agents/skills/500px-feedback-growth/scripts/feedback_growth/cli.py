@@ -112,7 +112,7 @@ def _candidates(checkpoint, state) -> List[Candidate]:
         identifier = str(data["photographer_id"])
         stats = state.photographers.get(identifier)
         tier = classify_photographer(stats, item.occurred_at) if stats else "new"
-        is_retest = bool(stats and (stats.failure_count == 1 or (tier == "dormant" and stats.dormant_retest_eligible)))
+        is_retest = bool(stats and tier == "dormant" and stats.dormant_retest_eligible)
         candidate = Candidate(
             photographer_id=identifier,
             display_name=str(data["display_name"]),

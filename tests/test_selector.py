@@ -1,10 +1,12 @@
 from collections import Counter
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
 from tests import bootstrap  # noqa: F401
-from feedback_growth.model import AggregateState, Candidate, PhotographerStats
+from feedback_growth.cli import _candidates
+from feedback_growth.model import AggregateState, Candidate, Event, PhotographerStats
 from feedback_growth.selector import DAILY_TARGET, select_run_candidates
 from tests.helpers import dt
 
@@ -55,28 +57,78 @@ def state_for(candidates):
 
 
 class SelectorTest(unittest.TestCase):
-    def test_complete_day_allocates_200_unique_photographers_without_second_likes(self):
-        exploit = [candidate(f"v{i:03}", "verified", i) for i in range(112)]
-        retest = [candidate(f"r{i:03}", "new", i, True) for i in range(50)]
-        new = [candidate(f"n{i:03}", "new", i) for i in range(38)]
-        candidates = exploit + retest + new
+    def test_single_unanswered_touch_is_not_routed_to_retest(self):
+        item = candidate("p1", "new", 1)
+        stats = photographer(item)
+        stats = PhotographerStats(
+            **{
+                **stats.__dict__,
+                "failure_count": 1,
+                "touch_count": 1,
+                "dormant_retest_eligible": False,
+            }
+        )
+        checkpoint = SimpleNamespace(
+            events=(
+                Event(
+                    "candidate_observed",
+                    NOW,
+                    {
+                        "photographer_id": "p1",
+                        "display_name": "p1",
+                        "profile_url": "https://example.test/p1",
+                        "source_photo_id": "source",
+                        "source_url": "https://example.test/source",
+                        "page_order": 1,
+                    },
+                ),
+            )
+        )
+        state = AggregateState({"p1": stats}, frozenset(), {}, None, {}, ())
+
+        observed = _candidates(checkpoint, state)
+
+        self.assertFalse(observed[0].is_retest)
+
+    def test_complete_day_allocates_120_60_20_without_second_likes(self):
+        exploit = [candidate(f"v{i:03}", "verified", i) for i in range(160)]
+        new = [candidate(f"n{i:03}", "new", i) for i in range(80)]
+        retest = [candidate(f"r{i:03}", "dormant", i, True) for i in range(40)]
+        candidates = exploit + new + retest
 
         result = select_run_candidates(candidates, state_for(candidates), NOW, seed=8122026, limit=200)
 
         buckets = Counter(item["bucket"] for item in result.selected)
         ids = [item["photographer_id"] for item in result.selected]
-        self.assertEqual(buckets, {"exploit_first": 112, "retest": 50, "new": 38})
+        self.assertEqual(buckets, {"exploit_first": 120, "new": 60, "retest": 20})
         self.assertEqual(len(ids), 200)
         self.assertEqual(len(set(ids)), 200)
         self.assertNotIn("verified_second", buckets)
         self.assertEqual(result.status, "daily_complete")
 
-    def test_retest_new_is_not_new_exploration(self):
-        item = candidate("r1", "new", 1, True)
+    def test_cooled_dormant_is_retest_not_new_exploration(self):
+        item = candidate("r1", "dormant", 1, True)
 
         result = select_run_candidates([item], state_for([item]), NOW, seed=1, limit=1)
 
         self.assertEqual(result.selected[0]["bucket"], "retest")
+
+    def test_uncooled_dormant_is_not_selected_as_new(self):
+        item = candidate("r1", "dormant", 1, False)
+
+        result = select_run_candidates([item], state_for([item]), NOW, seed=1, limit=1)
+
+        self.assertEqual(result.selected, ())
+        self.assertEqual(result.status, "incomplete_candidate_exhausted")
+
+    def test_missing_retest_is_filled_from_non_dormant_pools(self):
+        exploit = [candidate(f"v{i:03}", "verified", i) for i in range(140)]
+        new = [candidate(f"n{i:03}", "new", i) for i in range(60)]
+        candidates = exploit + new
+
+        result = select_run_candidates(candidates, state_for(candidates), NOW, seed=5, limit=200)
+
+        self.assertEqual(Counter(item["bucket"] for item in result.selected), {"exploit_first": 140, "new": 60})
 
     def test_shortage_does_not_weaken_constraints(self):
         candidates = [candidate(f"n{i:02}", "new", i) for i in range(70)]

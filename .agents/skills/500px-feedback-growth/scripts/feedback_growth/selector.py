@@ -1,7 +1,7 @@
 from collections import Counter
 from datetime import datetime
 import random
-from typing import Dict, List, Mapping, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 from .analytics import beta_parameters
@@ -11,7 +11,8 @@ from .model import AggregateState, Candidate, SelectionResult
 DAILY_PHOTOGRAPHER_TARGET = 200
 DAILY_TARGET = DAILY_PHOTOGRAPHER_TARGET
 MIN_UNIQUE = DAILY_PHOTOGRAPHER_TARGET
-QUOTAS = {"exploit_first": 112, "retest": 50, "new": 38}
+QUOTAS = {"exploit_first": 120, "new": 60, "retest": 20}
+PRIMARY_BUCKET_ORDER = ("exploit_first", "new", "retest")
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -19,9 +20,9 @@ def _today(now: datetime) -> str:
     return now.astimezone(SHANGHAI).date().isoformat()
 
 
-def _candidate_bucket(candidate: Candidate) -> str:
-    if candidate.is_retest:
-        return "retest"
+def _candidate_bucket(candidate: Candidate) -> Optional[str]:
+    if candidate.tier == "dormant":
+        return "retest" if candidate.is_retest else None
     if candidate.tier in {"verified", "promising"}:
         return "exploit_first"
     return "new"
@@ -118,9 +119,11 @@ def select_run_candidates(
     pools = {"exploit_first": [], "retest": [], "new": []}
     for candidate in unique_candidates.values():
         if existing_per_photographer[candidate.photographer_id] == 0:
-            pools[_candidate_bucket(candidate)].append(candidate)
+            bucket = _candidate_bucket(candidate)
+            if bucket is not None:
+                pools[bucket].append(candidate)
 
-    for bucket in ("exploit_first", "retest", "new"):
+    for bucket in PRIMARY_BUCKET_ORDER:
         deficit = max(0, QUOTAS[bucket] - existing_quota[bucket])
         add_from(pools[bucket], bucket, deficit)
 
@@ -130,7 +133,7 @@ def select_run_candidates(
             for candidate in unique_candidates.values()
             if selected_counts[candidate.photographer_id] == 0
         ]
-        for bucket in ("exploit_first", "retest", "new"):
+        for bucket in PRIMARY_BUCKET_ORDER:
             add_from(
                 [candidate for candidate in unselected_first if _candidate_bucket(candidate) == bucket],
                 bucket,
