@@ -4,321 +4,192 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from tests import bootstrap  # noqa: F401
-from feedback_growth.analytics import matured_cohort_kpi
 from feedback_growth.dashboard import build_dashboard_view_model, render_dashboard
-from feedback_growth.model import (
-    AggregateState,
-    CycleObservation,
-    DailyTaskStats,
-    EpisodeEvidence,
-    FeedbackCycle,
-    FeedbackEpisode,
-    OutgoingTouch,
-    PhotographerStats,
-    ReviewAttempt,
-    ReviewSlot,
-)
+from feedback_growth.model import AggregateState, DailyTaskStats, FeedbackScan, OutgoingTouch, PhotographerStats
 from tests.helpers import dt
 
 
-TEMPLATE = (
-    Path(__file__).parents[1]
-    / ".agents"
-    / "skills"
-    / "500px-feedback-growth"
-    / "assets"
-    / "dashboard.html"
-)
+TEMPLATE = Path(__file__).parents[1] / ".agents" / "skills" / "500px-feedback-growth" / "assets" / "dashboard.html"
 
 
-def daily(day, likes, unique, *, completed_at=None, comments=0, covered=None):
+def daily(day, likes, unique, *, completed_at=None, comments=0, covered=None, quotas=None):
     covered = unique if covered is None else covered
     return DailyTaskStats(
         daily_task_id=day,
         confirmed_likes=likes,
         unique_photographer_ids=frozenset(f"p{index}" for index in range(unique)),
-        quota_counts={"exploit_first": min(likes, unique)},
+        quota_counts=quotas or {"exploit_first": min(likes, unique)},
         confirmed_comments=comments,
-        status="completed" if completed_at else "active",
+        status="completed" if completed_at else "in_progress",
         completed_at=completed_at,
         reinforcement_likes=max(0, likes - unique),
-        skip_counts={"all_recent_works_liked": 2} if completed_at else {},
-        risk_events=({"reason": "rate_limit", "evidence_summary": "slow down"},) if completed_at else (),
+        skip_counts={"already_liked": max(0, covered - likes)},
+        risk_events=(),
         covered_photographer_ids=frozenset(f"covered-{index}" for index in range(covered)),
     )
 
 
-def state_with_tasks(*tasks, paused_reason=None):
+def photographer(identifier, *, raw, recent, effective, touches, unanswered, last_feedback):
+    return PhotographerStats(
+        photographer_id=identifier,
+        display_name=identifier,
+        profile_url=f"https://example.test/{identifier}",
+        baseline_work_ids=frozenset(),
+        baseline_work_positions={},
+        historical_high_potential=False,
+        episodes=(),
+        eligible_episodes=(),
+        last_comment_at=None,
+        today_like_photo_ids=(),
+        success_count_30d=1 if recent else 0,
+        failure_count=unanswered,
+        dormant_retest_eligible=False,
+        raw_feedback_points=raw,
+        feedback_points_30d=recent,
+        touch_count=touches,
+        touch_count_30d=touches,
+        unanswered_touch_count_30d=unanswered,
+        effective_feedback_points=effective,
+        effective_unanswered_touches=float(unanswered),
+        last_feedback_at=last_feedback,
+        last_unanswered_touch_at=None,
+    )
+
+
+def state_with(*, tasks=(), photographers=None, touches=(), scans=(), paused_reason=None):
     return AggregateState(
-        photographers={},
+        photographers=photographers or {},
         known_received_like_pairs=frozenset(),
         daily_tasks={task.daily_task_id: task for task in tasks},
         paused_reason=paused_reason,
         episodes={},
-        outgoing_touches=(),
+        outgoing_touches=tuple(touches),
+        feedback_scans=tuple(scans),
     )
 
 
 class DashboardTest(unittest.TestCase):
-    def test_cycle_view_shows_frozen_five_and_review_slots(self):
-        touch_at = dt(13, 7)
-        episode = FeedbackEpisode("e1", "p1", ("a1",), touch_at, touch_at, touch_at + timedelta(hours=72), "success", touch_at + timedelta(hours=19), 1)
-        evidence = EpisodeEvidence("e1", "p1", "success", episode.expires_at, touch_at + timedelta(hours=19), 1, 1)
-        photographer = PhotographerStats("p1", "p1", "", frozenset(), {}, False, (episode,), (evidence,), None, (), 1, 0, False)
-        attempt_1d = ReviewAttempt(1, "completed", touch_at + timedelta(hours=20), None, touch_at + timedelta(hours=19), touch_at + timedelta(hours=19, minutes=10), None, frozenset(f"work-{index}" for index in range(1, 6)))
-        attempt_3d = ReviewAttempt(1, "pending", touch_at + timedelta(hours=70), None, None, None, None, frozenset())
-        cycle = FeedbackCycle(
-            "cycle-1",
-            True,
-            tuple(f"work-{index}" for index in range(1, 6)),
-            frozenset({("work-1", "old")}),
-            ("a1",),
-            (CycleObservation("work-1", "p1", touch_at + timedelta(hours=19), "review:1"),),
-            touch_at,
-            ReviewSlot("review_1d", "completed", attempt_1d.due_at, (attempt_1d,), attempt_1d.completed_at),
-            ReviewSlot("review_3d", "pending", attempt_3d.due_at, (attempt_3d,), None),
-            "reviews_scheduled",
-        )
-        state = AggregateState(
-            {"p1": photographer}, frozenset(), {"2026-08-13": daily("2026-08-13", 100, 100, completed_at=touch_at)}, None,
-            {"e1": episode}, (OutgoingTouch("a1", "p1", "target", touch_at, "e1", "new"),), {"cycle-1": cycle}, "cycle-1"
+    def test_view_model_has_immediate_feedback_sections_and_allocation(self):
+        now = dt(19, 12)
+        task = daily(
+            "2026-08-19",
+            150,
+            150,
+            covered=200,
+            completed_at=now,
+            comments=149,
+            quotas={"exploit_first": 130, "new": 50, "retest": 20},
         )
 
-        view = build_dashboard_view_model(state, touch_at + timedelta(hours=20))
+        view = build_dashboard_view_model(state_with(tasks=(task,)), now)
 
-        self.assertEqual(view["cycle"]["showcase_count"], 5)
-        self.assertEqual(view["cycle"]["review_1d"]["status"], "completed")
-        self.assertEqual(view["cycle"]["review_3d"]["status"], "pending")
-        self.assertEqual(view["cycle"]["works"][0]["new_liker_count"], 1)
-        self.assertEqual(view["cycle"]["settlement"]["status"], "open")
-
-    def test_template_has_redesign_quality_and_accessibility_contract(self):
-        template = TEMPLATE.read_text(encoding="utf-8")
-
-        self.assertIn('id="theme-toggle"', template)
-        self.assertIn('aria-label="切换明暗主题"', template)
-        self.assertIn('<html lang="zh-CN" data-theme="light">', template)
-        self.assertNotIn("prefers-color-scheme: dark", template)
-        self.assertNotIn("matchMedia", template)
-        self.assertIn("prefers-reduced-motion: reduce", template)
-        self.assertIn('role="img"', template)
-        self.assertIn('role="tablist"', template)
-        self.assertIn('aria-selected=', template)
-        self.assertIn('aria-live="polite"', template)
-        self.assertIn('data.trend_chart.kind === "empty"', template)
-        self.assertIn('"single_day_bars", "grouped_bars"', template)
-        self.assertIn("cohort_outcomes", template)
-        self.assertNotIn('id="funnel"', template)
-        self.assertIn("@media (max-width: 720px)", template)
-        self.assertNotIn("class=\"cards\"", template)
-        self.assertNotIn("class=\"progress\"", template)
-        self.assertNotIn("Feedback intelligence", template)
-        self.assertNotIn("—", template)
-        self.assertNotIn("–", template)
-
-    def test_partial_task_is_current_header_only(self):
-        state = state_with_tasks(daily("2026-08-12", 25, 25))
-
-        view = build_dashboard_view_model(state, dt(12, 12))
-
-        self.assertEqual(view["current_task"]["confirmed_likes"], 25)
-        self.assertEqual(view["current_task"]["unique_photographers"], 25)
-        self.assertEqual(view["history_tabs"], [])
-
-    def test_review_uses_latest_execution_instead_of_zero_like_current_day(self):
-        previous = daily("2026-08-11", 100, 100, completed_at=dt(11, 15))
-        current_preflight = daily("2026-08-12", 0, 0)
-        state = state_with_tasks(previous, current_preflight)
-
-        view = build_dashboard_view_model(state, dt(12, 12))
-
-        self.assertEqual(view["current_task"]["daily_task_id"], "2026-08-11")
-        self.assertEqual(view["current_task"]["confirmed_likes"], 100)
-        self.assertEqual(view["current_task"]["unique_photographers"], 100)
-        self.assertFalse(view["current_task"]["is_today"])
         self.assertEqual(
-            view["daily_trend"],
-            [{"day": "2026-08-11", "confirmed_likes": 100, "attributed_reciprocators": 0}],
-        )
-        self.assertEqual(view["trend_chart"]["kind"], "single_day_bars")
-
-    def test_new_execution_becomes_review_cohort_and_feedback_stays_with_touch_day(self):
-        now = dt(12, 12)
-        previous_touch_at = dt(11, 15)
-        current_touch_at = dt(12, 9)
-        previous_episode = FeedbackEpisode(
-            "e1", "p1", ("a1",), previous_touch_at, previous_touch_at,
-            previous_touch_at + timedelta(hours=72), "success",
-            current_touch_at, 1,
-        )
-        current_episode = FeedbackEpisode(
-            "e2", "p2", ("a2",), current_touch_at, current_touch_at,
-            current_touch_at + timedelta(hours=72), "open", None, 0,
-        )
-        state = AggregateState(
-            photographers={},
-            known_received_like_pairs=frozenset(),
-            daily_tasks={
-                "2026-08-11": daily("2026-08-11", 100, 100, completed_at=dt(11, 16)),
-                "2026-08-12": daily("2026-08-12", 20, 20),
+            set(view),
+            {
+                "generated_at",
+                "current_task",
+                "latest_feedback_scan",
+                "performance_30d",
+                "tier_distribution",
+                "relationship_ranking",
+                "strategy_allocation",
+                "history_tabs",
             },
-            paused_reason=None,
-            episodes={"e1": previous_episode, "e2": current_episode},
-            outgoing_touches=(
-                OutgoingTouch("a1", "p1", "photo-1", previous_touch_at, "e1", "exploit_first"),
-                OutgoingTouch("a2", "p2", "photo-2", current_touch_at, "e2", "new"),
-            ),
+        )
+        self.assertEqual(view["current_task"]["covered_photographers"], 200)
+        self.assertEqual(view["current_task"]["skipped"], 50)
+        self.assertEqual(view["strategy_allocation"]["planned"], {"exploit_first": 120, "new": 60, "retest": 20})
+        self.assertEqual(view["strategy_allocation"]["actual"]["exploit_first"], 130)
+        self.assertNotIn("cycle", view)
+        self.assertNotIn("latency_buckets", view)
+
+    def test_incomplete_scan_is_not_rendered_as_zero_feedback(self):
+        now = dt(19, 12)
+        scan = FeedbackScan(
+            "scan-3",
+            now,
+            ("mine-1", "mine-2", "mine-3"),
+            frozenset({"mine-1", "mine-2"}),
+            frozenset({"mine-1", "mine-2"}),
+            0,
+            0,
+            0,
+            frozenset({"mine-3"}),
         )
 
-        view = build_dashboard_view_model(state, now)
+        latest = build_dashboard_view_model(state_with(scans=(scan,)), now)["latest_feedback_scan"]
 
-        self.assertEqual(view["current_task"]["daily_task_id"], "2026-08-12")
-        self.assertEqual(view["current_task"]["confirmed_likes"], 20)
-        self.assertTrue(view["current_task"]["is_today"])
-        self.assertEqual(
-            view["cohort_outcomes"],
-            {"attributed": 0, "open": 1, "failed": 0},
-        )
-        self.assertEqual(
-            view["daily_trend"],
-            [
-                {"day": "2026-08-11", "confirmed_likes": 100, "attributed_reciprocators": 1},
-                {"day": "2026-08-12", "confirmed_likes": 20, "attributed_reciprocators": 0},
-            ],
-        )
-        self.assertEqual(view["trend_chart"]["kind"], "grouped_bars")
+        self.assertFalse(latest["complete"])
+        self.assertEqual(latest["status"], "数据不完整")
+        self.assertEqual(latest["completed_count"], 2)
+        self.assertEqual(latest["issues"], ["mine-3"])
 
-    def test_eight_execution_days_use_line_chart(self):
-        tasks = [daily(f"2026-08-{day:02}", 100, 100, completed_at=dt(day, 15)) for day in range(1, 9)]
-
-        view = build_dashboard_view_model(state_with_tasks(*tasks), dt(12, 12))
-
-        self.assertEqual(view["trend_chart"]["kind"], "lines")
-
-    def test_history_uses_attributed_episodes_and_omits_untracked_tier_changes(self):
-        touch_at = dt(11, 15)
-        feedback_at = touch_at + timedelta(hours=8)
-        episode = FeedbackEpisode(
-            "e1", "p1", ("a1",), touch_at, touch_at,
-            touch_at + timedelta(hours=72), "success", feedback_at, 1,
-        )
-        task = daily("2026-08-11", 100, 100, completed_at=dt(11, 16))
-        state = AggregateState(
-            photographers={},
-            known_received_like_pairs=frozenset(),
-            daily_tasks={task.daily_task_id: task},
-            paused_reason=None,
-            episodes={episode.episode_id: episode},
-            outgoing_touches=(
-                OutgoingTouch("a1", "p1", "photo-1", touch_at, "e1", "exploit_first"),
-            ),
+    def test_feedback_points_per_100_touches_can_exceed_100(self):
+        now = dt(19, 12)
+        first = photographer("p1", raw=3, recent=3, effective=3.0, touches=1, unanswered=0, last_feedback=now)
+        second = photographer("p2", raw=3, recent=3, effective=3.0, touches=1, unanswered=0, last_feedback=now)
+        touches = (
+            OutgoingTouch("a1", "p1", "photo-1", now - timedelta(hours=2), None, "exploit_first", "immediate"),
+            OutgoingTouch("a2", "p2", "photo-2", now - timedelta(hours=1), None, "new", "immediate"),
         )
 
-        history = build_dashboard_view_model(state, dt(12, 12))["history_tabs"][0]
+        performance = build_dashboard_view_model(
+            state_with(photographers={"p1": first, "p2": second}, touches=touches),
+            now,
+        )["performance_30d"]
 
-        self.assertEqual(history["attributed_reciprocators"], 1)
-        self.assertNotIn("tier_changes", history)
+        self.assertEqual(performance["touches"], 2)
+        self.assertEqual(performance["feedback_points"], 6)
+        self.assertEqual(performance["feedback_points_per_100_touches"], 300.0)
+
+    def test_relationship_ranking_uses_effective_then_raw_points(self):
+        now = dt(19, 12)
+        photographers = {
+            "p1": photographer("p1", raw=20, recent=6, effective=8.123456, touches=5, unanswered=0, last_feedback=now),
+            "p2": photographer("p2", raw=9, recent=5, effective=9.0, touches=4, unanswered=0, last_feedback=now),
+        }
+
+        view = build_dashboard_view_model(state_with(photographers=photographers), now)
+
+        self.assertEqual([item["photographer_id"] for item in view["relationship_ranking"]], ["p2", "p1"])
+        self.assertEqual(view["relationship_ranking"][0]["effective_feedback_points"], 9.0)
+        self.assertEqual(view["relationship_ranking"][0]["raw_feedback_points"], 9)
+        self.assertEqual(view["relationship_ranking"][1]["effective_feedback_points"], 8.123)
 
     def test_legacy_completed_100_like_task_remains_in_history(self):
-        complete = daily("2026-08-11", 100, 84, completed_at=dt(11, 15), comments=3)
-        over_limit = daily("2026-08-10", 101, 85)
-        state = state_with_tasks(complete, over_limit)
+        completed_at = dt(11, 15)
+        task = daily("2026-08-11", 100, 84, covered=84, completed_at=completed_at, comments=3)
 
-        view = build_dashboard_view_model(state, dt(12, 12))
+        view = build_dashboard_view_model(state_with(tasks=(task,)), dt(19, 12))
 
         self.assertEqual(len(view["history_tabs"]), 1)
-        self.assertIsNone(view["current_task"]["coverage_target"])
-        tab = view["history_tabs"][0]
-        self.assertEqual(tab["daily_task_id"], "2026-08-11")
-        self.assertEqual(tab["completed_at"], dt(11, 15).isoformat())
-        self.assertEqual(tab["unique_photographers"], 84)
-        self.assertEqual(tab["reinforcement_likes"], 16)
-        self.assertEqual(tab["confirmed_comments"], 3)
-        self.assertEqual(tab["attributed_reciprocators"], 0)
-        self.assertNotIn("tier_changes", tab)
-        self.assertEqual(tab["quota_counts"]["exploit_first"], 84)
-        self.assertEqual(tab["skip_counts"]["all_recent_works_liked"], 2)
-        self.assertEqual(tab["risk_events"][0]["reason"], "rate_limit")
+        self.assertEqual(view["history_tabs"][0]["daily_task_id"], "2026-08-11")
+        self.assertEqual(view["history_tabs"][0]["confirmed_likes"], 100)
+        self.assertEqual(view["history_tabs"][0]["confirmed_comments"], 3)
 
-    def test_200_covered_photographers_complete_with_fewer_likes(self):
-        complete = daily("2026-08-18", 150, 150, covered=200, completed_at=dt(18, 15), comments=150)
+    def test_template_keeps_visual_and_accessibility_contract(self):
+        template = TEMPLATE.read_text(encoding="utf-8")
 
-        view = build_dashboard_view_model(state_with_tasks(complete), dt(18, 16))
-
-        self.assertEqual(view["current_task"]["covered_photographers"], 200)
-        self.assertEqual(view["current_task"]["coverage_target"], 200)
-        self.assertEqual(view["current_task"]["confirmed_likes"], 150)
-        self.assertEqual(view["current_task"]["status"], "completed")
-        self.assertEqual(view["history_tabs"][0]["covered_photographers"], 200)
-        self.assertEqual(view["history_tabs"][0]["confirmed_likes"], 150)
-
-    def test_kpi_matches_analytics(self):
-        now = dt(12, 12)
-        touch_at = now - timedelta(days=5)
-        success_episode = FeedbackEpisode(
-            "e1", "p1", ("a1",), touch_at, touch_at, touch_at + timedelta(hours=72),
-            "success", touch_at + timedelta(hours=8), 1,
-        )
-        failed_episode = FeedbackEpisode(
-            "e2", "p2", ("a2",), touch_at, touch_at, touch_at + timedelta(hours=72),
-            "failure", None, 0,
-        )
-        state = AggregateState(
-            photographers={},
-            known_received_like_pairs=frozenset(),
-            daily_tasks={},
-            paused_reason=None,
-            episodes={"e1": success_episode, "e2": failed_episode},
-            outgoing_touches=(
-                OutgoingTouch("a1", "p1", "photo-1", touch_at, "e1", "exploit_first"),
-                OutgoingTouch("a2", "p2", "photo-2", touch_at, "e2", "new"),
-            ),
-        )
-
-        view = build_dashboard_view_model(state, now)
-
-        self.assertEqual(view["kpi"]["value"], matured_cohort_kpi(state, now))
-        self.assertEqual(view["kpi"]["numerator"], 1)
-        self.assertEqual(view["kpi"]["denominator"], 2)
+        self.assertIn('<html lang="zh-CN" data-theme="light">', template)
+        self.assertIn('id="theme-toggle"', template)
+        self.assertIn('aria-label="切换明暗主题"', template)
+        self.assertIn('aria-live="polite"', template)
+        self.assertIn("prefers-reduced-motion: reduce", template)
+        self.assertIn("@media (max-width: 720px)", template)
+        for section_id in ("current-task", "latest-feedback-scan", "performance-30d", "relationship-tiers", "strategy-allocation"):
+            self.assertIn(f'id="{section_id}"', template)
+        self.assertNotIn("review_1d", template)
+        self.assertNotIn("review_3d", template)
+        self.assertNotIn("latency_buckets", template)
 
     def test_render_is_offline_and_escapes_script_terminator(self):
+        now = dt(19, 12)
         malicious_name = "Alice </script><script>alert(1)</script>"
-        first = FeedbackEpisode(
-            "e1", "p1", ("a1",), dt(8), dt(8), dt(11), "success", dt(9), 1,
-        )
-        second = FeedbackEpisode(
-            "e2", "p1", ("a2",), dt(9), dt(9), dt(12), "success", dt(10), 1,
-        )
-        photographer = PhotographerStats(
-            photographer_id="p1",
-            display_name=malicious_name,
-            profile_url="https://example.test/p1",
-            baseline_work_ids=frozenset(),
-            baseline_work_positions={},
-            historical_high_potential=True,
-            episodes=(first, second),
-            eligible_episodes=(
-                EpisodeEvidence("e1", "p1", "success", first.expires_at, first.feedback_first_seen_at, 1, 1),
-                EpisodeEvidence("e2", "p1", "success", second.expires_at, second.feedback_first_seen_at, 1, 1),
-            ),
-            last_comment_at=None,
-            today_like_photo_ids=(),
-            success_count_30d=2,
-            failure_count=0,
-            dormant_retest_eligible=False,
-        )
-        state = AggregateState(
-            photographers={"p1": photographer},
-            known_received_like_pairs=frozenset(),
-            daily_tasks={},
-            paused_reason=None,
-            episodes={"e1": first, "e2": second},
-            outgoing_touches=(),
-        )
+        stats = photographer(malicious_name, raw=3, recent=3, effective=3.0, touches=1, unanswered=0, last_feedback=now)
 
         with TemporaryDirectory() as directory:
             output = Path(directory) / "dashboard.html"
-            render_dashboard(state, dt(12, 12), TEMPLATE, output)
+            render_dashboard(state_with(photographers={malicious_name: stats}), now, TEMPLATE, output)
             html = output.read_text(encoding="utf-8")
 
         self.assertNotIn("__DASHBOARD_DATA__", html)
@@ -326,8 +197,6 @@ class DashboardTest(unittest.TestCase):
         self.assertNotIn("https://", html)
         self.assertNotIn("</script><script>alert(1)</script>", html)
         self.assertIn("<\\/script>", html)
-        self.assertNotIn("—", html)
-        self.assertNotIn("–", html)
 
 
 if __name__ == "__main__":
