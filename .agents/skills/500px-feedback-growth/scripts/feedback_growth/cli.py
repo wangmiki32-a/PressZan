@@ -11,7 +11,13 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from . import SCHEMA_VERSION
-from .analytics import WINDOW, classify_photographer, rebuild_state
+from .analytics import (
+    WINDOW,
+    StateValidationError,
+    build_feedback_scan_completed_event,
+    classify_photographer,
+    rebuild_state,
+)
 from .automation import build_review_request, build_review_requests
 from .dashboard import generate_dashboard
 from .model import Candidate, CheckpointHeader, Event, RunLog
@@ -371,8 +377,6 @@ def command_begin(args) -> int:
                 ),
             ),
         )
-    if args.mode in {"run", "preflight"}:
-        _append_expired_episodes(root, run_id, now, state)
     remaining = _remaining_photographer_quota(daily)
     _json(
         {
@@ -430,6 +434,10 @@ def command_event(args) -> int:
     if any(item.kind == "safety_paused" for item in checkpoint.events) and args.kind.startswith("outgoing_"):
         return _error("run_paused")
     data = _parse_fields(args.field)
+    if args.kind == "outgoing_like_confirmed":
+        data["settlement_mode"] = (
+            "legacy" if checkpoint.header.transaction_context.get("cycle_id") else "immediate"
+        )
     if args.kind == "outgoing_comment_confirmed" and data.get("content") != "👍👍👍":
         return _error("invalid_comment_content", expected="👍👍👍")
     event = Event(args.kind, now, data)
@@ -443,7 +451,7 @@ def command_event(args) -> int:
             return _error("photographer_already_covered", photographer_id=photographer_id)
         if daily and _remaining_photographer_quota(daily) == 0:
             return _error("daily_complete")
-    if args.kind == "outgoing_like_confirmed":
+    if args.kind == "outgoing_like_confirmed" and data["settlement_mode"] == "legacy":
         day = checkpoint.header.daily_task_id
         expected_action = _action_id(day, str(data["photographer_id"]), str(data["photo_id"]), args.kind)
         if data.get("action_id") != expected_action:
@@ -507,6 +515,28 @@ def command_event(args) -> int:
                 )
     append_checkpoint_events(root, args.run_id, additions)
     _json({"ok": True, "appended": [item.kind for item in additions]})
+    return 0
+
+
+def command_feedback_scan_complete(args) -> int:
+    root = _state_root(args.state_root)
+    now = _now(args.now)
+    checkpoint = read_checkpoint(root, args.run_id)
+    if checkpoint.header.mode not in {"preflight", "run"}:
+        return _error("daily_transaction_required")
+    if checkpoint.header.daily_task_id != _day(now):
+        return _error("daily_task_expired", daily_task_id=checkpoint.header.daily_task_id)
+    try:
+        completed = build_feedback_scan_completed_event(
+            load_effective_runs(root),
+            args.scan_id,
+            tuple(args.completed_photo_id),
+            now,
+        )
+    except StateValidationError as error:
+        return _error("invalid_feedback_scan", message=str(error))
+    append_checkpoint_events(root, args.run_id, (completed,))
+    _json({"ok": True, **completed.data})
     return 0
 
 
@@ -1510,6 +1540,12 @@ def build_parser() -> argparse.ArgumentParser:
     event.add_argument("--field", action="append", default=[])
     _add_common(event)
 
+    feedback_scan = commands.add_parser("feedback-scan-complete")
+    feedback_scan.add_argument("--run-id", required=True)
+    feedback_scan.add_argument("--scan-id", required=True)
+    feedback_scan.add_argument("--completed-photo-id", action="append", default=[])
+    _add_common(feedback_scan)
+
     cycle_start = commands.add_parser("cycle-start")
     cycle_start.add_argument("--run-id", required=True)
     cycle_start.add_argument("--cycle-id", required=True)
@@ -1673,6 +1709,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "begin": command_begin,
         "resume": command_resume,
         "event": command_event,
+        "feedback-scan-complete": command_feedback_scan_complete,
         "cycle-start": command_cycle_start,
         "cycle-showcase-observe": command_cycle_showcase_observe,
         "cycle-showcase-freeze": command_cycle_showcase_freeze,

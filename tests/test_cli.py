@@ -11,7 +11,7 @@ import unittest
 from tests import bootstrap  # noqa: F401
 from feedback_growth.model import Event, RunLog
 from feedback_growth.store import append_checkpoint_events, read_checkpoint, seal_run
-from tests.helpers import confirmed_like, dt, opened
+from tests.helpers import confirmed_like, dt, latest_three_scan, opened
 
 
 SCRIPT = (
@@ -165,6 +165,122 @@ def seed_scheduled_cycle(root, due_at, cycle_id="c1", review_kind="review_3d"):
 
 
 class CliTest(unittest.TestCase):
+    def test_feedback_scan_complete_builds_first_three_work_baseline(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            result, begun = invoke(root, "begin", "--mode", "preflight", "--now", "2026-08-19T08:00:00+00:00")
+            self.assertEqual(result.returncode, 0, begun)
+            scan_at = dt(19, 8)
+            append_checkpoint_events(
+                root,
+                begun["run_id"],
+                latest_three_scan("scan-3", scan_at, (("mine-1", "p1"),), include_summary=False),
+            )
+
+            result, payload = invoke(
+                root,
+                "feedback-scan-complete",
+                "--run-id", begun["run_id"],
+                "--scan-id", "scan-3",
+                "--completed-photo-id", "mine-1",
+                "--completed-photo-id", "mine-2",
+                "--completed-photo-id", "mine-3",
+                "--now", scan_at.isoformat(),
+            )
+
+            self.assertEqual(result.returncode, 0, payload)
+            self.assertEqual(payload["photo_ids"], ["mine-1", "mine-2", "mine-3"])
+            self.assertEqual(payload["baseline_photo_ids"], ["mine-1", "mine-2", "mine-3"])
+            self.assertEqual(payload["new_feedback_points"], 0)
+            checkpoint = read_checkpoint(root, begun["run_id"])
+            self.assertEqual(checkpoint.events[-1].kind, "feedback_scan_completed")
+
+            result, repeated = invoke(
+                root,
+                "feedback-scan-complete",
+                "--run-id", begun["run_id"],
+                "--scan-id", "scan-3",
+                "--completed-photo-id", "mine-1",
+                "--completed-photo-id", "mine-2",
+                "--completed-photo-id", "mine-3",
+                "--now", scan_at.isoformat(),
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(repeated["code"], "invalid_feedback_scan")
+
+    def test_feedback_scan_complete_rejects_missing_latest_position(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            result, begun = invoke(root, "begin", "--mode", "preflight", "--now", "2026-08-19T08:00:00+00:00")
+            self.assertEqual(result.returncode, 0, begun)
+            scan_at = dt(19, 8)
+            events = latest_three_scan("scan-3", scan_at, include_summary=False)
+            events = tuple(
+                item
+                for item in events
+                if not (item.kind == "work_observed" and item.data["position"] == 3)
+            )
+            append_checkpoint_events(root, begun["run_id"], events)
+
+            result, payload = invoke(
+                root,
+                "feedback-scan-complete",
+                "--run-id", begun["run_id"],
+                "--scan-id", "scan-3",
+                "--completed-photo-id", "mine-1",
+                "--completed-photo-id", "mine-2",
+                "--now", scan_at.isoformat(),
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "invalid_feedback_scan")
+
+    def test_immediate_like_does_not_open_episode(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            preview = create_preview(root, "2026-08-19T08:00:00+00:00")
+            result, begun = invoke(
+                root,
+                "begin",
+                "--mode", "run",
+                "--approve-preview", preview["preview_id"],
+                "--now", "2026-08-19T09:00:00+00:00",
+            )
+            self.assertEqual(result.returncode, 0, begun)
+            action_id = deterministic_action_id("2026-08-19", "p1", "photo-1", "outgoing_like_confirmed")
+
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id", begun["run_id"],
+                "--kind", "outgoing_like_confirmed",
+                "--field", f"action_id={action_id}",
+                "--field", "photographer_id=p1",
+                "--field", "photo_id=photo-1",
+                "--field", "photo_url=https://500px.test/photo/photo-1",
+                "--field", "quota_bucket=new",
+                "--field", "before_state=not_liked",
+                "--field", "after_state=liked",
+                "--now", "2026-08-19T09:01:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 0, payload)
+            self.assertEqual(payload["appended"], ["outgoing_like_confirmed"])
+            checkpoint = read_checkpoint(root, begun["run_id"])
+            self.assertEqual(checkpoint.events[-1].data["settlement_mode"], "immediate")
+            self.assertFalse(any(item.kind.startswith("feedback_episode_") for item in checkpoint.events))
+
+    def test_begin_does_not_materialize_expired_legacy_failures(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 1, dt(12, 1), "2026-08-12")
+
+            result, begun = invoke(root, "begin", "--mode", "preflight", "--now", "2026-08-19T08:00:00+00:00")
+
+            self.assertEqual(result.returncode, 0, begun)
+            checkpoint = read_checkpoint(root, begun["run_id"])
+            self.assertFalse(any(item.kind == "feedback_episode_failed" for item in checkpoint.events))
+
     def test_doctor_reports_portable_versioned_state(self):
         result, payload = invoke_without_state_root(
             "doctor",
