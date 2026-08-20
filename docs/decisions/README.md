@@ -22,9 +22,11 @@
 
 ## 当前记录
 
-- [ADR-0001：以追加式 Markdown 事件日志作为运行事实源](ADR-0001-append-only-event-log.md)
-- [ADR-0002：一次运行完成当日剩余点赞任务](ADR-0002-single-run-daily-task.md)
-- [ADR-0003：私有 Git 版本化 sealed runs](ADR-0003-git-backed-sealed-runs.md)
-- [ADR-0004：以 200 位摄影师覆盖作为每日完成条件](ADR-0004-200-photographer-coverage.md)
-- [ADR-0005：最新三张增量扫描与当日即时结算](ADR-0005-immediate-feedback-settlement.md)
-- [ADR-0006：Active run 跨日连续恢复](ADR-0006-cross-day-active-run.md)
+| 记录 | 状态 | 当前有效范围 | 部分替代关系 |
+|---|---|---|---|
+| [ADR-0001：追加式 Markdown 事件日志](ADR-0001-append-only-event-log.md) | Accepted | Append-only、sealed 优先、可重建派生状态 | Git 与 state root 条款由 ADR-0003 部分替代 |
+| [ADR-0002：单次连续任务](ADR-0002-single-run-daily-task.md) | Accepted / Partially Superseded | 零参数入口、自然语言批准、单 run 恢复 | 100 赞目标由 ADR-0004 部分替代；跨日边界由 ADR-0006 部分替代 |
+| [ADR-0003：Git-backed sealed runs](ADR-0003-git-backed-sealed-runs.md) | Accepted / Partially Superseded | 私有 Git、动态 state root、串行交接 | 新周期 Automation 条款由 ADR-0005 部分替代 |
+| [ADR-0004：200 位摄影师覆盖](ADR-0004-200-photographer-coverage.md) | Accepted / Partially Superseded | 200 位、第一张作品、点赞与跳过共同计覆盖 | 自然日终止边界由 ADR-0006 部分替代 |
+| [ADR-0005：最新三张即时结算](ADR-0005-immediate-feedback-settlement.md) | Accepted / Partially Superseded | 最新 3 张、0-3 分、即时账本、`120/60/20` | 跨日恢复边界由 ADR-0006 部分替代 |
+| [ADR-0006：Active run 跨日恢复](ADR-0006-cross-day-active-run.md) | Accepted | 当前跨日恢复合同 | 无 |

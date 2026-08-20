@@ -1,6 +1,6 @@
 # ADR-0002：一次运行完成当日剩余点赞任务
 
-> 修订说明：本 ADR 的跨日恢复边界已由 [ADR-0006](ADR-0006-cross-day-active-run.md) 替代。
+> 修订说明：本 ADR 的 100 次确认点赞目标已由 [ADR-0004](ADR-0004-200-photographer-coverage.md) 替代，跨日恢复边界已由 [ADR-0006](ADR-0006-cross-day-active-run.md) 替代；零参数入口、自然语言批准和单 run 恢复方向继续有效。
 
 - 状态：Accepted
 - 日期：2026-08-13

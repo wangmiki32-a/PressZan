@@ -76,6 +76,15 @@ class DocumentationContractTest(unittest.TestCase):
         ):
             self.assertNotIn(internal_detail, agents)
 
+    def test_adr_index_records_partial_supersession_chain(self):
+        index = read(DOCS_ROOT / "decisions" / "README.md")
+        adr_2 = read(DOCS_ROOT / "decisions" / "ADR-0002-single-run-daily-task.md")
+        adr_3 = read(DOCS_ROOT / "decisions" / "ADR-0003-git-backed-sealed-runs.md")
+        for value in ("ADR-0004", "ADR-0005", "ADR-0006", "部分替代"):
+            self.assertIn(value, index)
+        self.assertIn("ADR-0004", "\n".join(adr_2.splitlines()[:10]))
+        self.assertIn("ADR-0005", "\n".join(adr_3.splitlines()[:12]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,8 @@
 - 适用范围：运行事实源、跨机器交接、路径解析和隐私边界
 - 覆盖：ADR-0001 中“个人运行日志不进入 Git”和“固定机器绝对 state root”两项决定
 
+> 修订说明：Git-backed sealed runs、动态 state root 和串行交接继续有效；“每个新周期创建一次性回顾 Automation”条款已由 [ADR-0005](ADR-0005-immediate-feedback-settlement.md) 替代。
+
 ## 背景
 
 项目代码可以通过 Git 迁移，但历史触达、周期证据、摄影师分层输入和 42/58 成熟回馈结果只存在于原机器 `.local/500px-feedback-growth/runs/*.md`。另一位执行者 clone 后无法延续算法证据，文档中的机器绝对路径也不能复用。
