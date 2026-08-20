@@ -1,6 +1,6 @@
 # PressZan 可迁移交接设计
 
-- 状态：Approved for implementation
+- 状态：Implemented / Partially Superseded；Git-backed 交接仍有效，未来回顾 Automation 条款由 ADR-0005 替代
 - 日期：2026-08-16
 - 适用范围：仓库状态边界、路径解析、朋友交接、Git 发布
 

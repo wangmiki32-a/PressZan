@@ -1,6 +1,6 @@
 # 单次 100 赞与启动简化 Consolidation 设计
 
-- 状态：Implemented
+- 状态：Partially Superseded；零参数入口和自然语言批准仍有效，100 赞目标由 ADR-0004 替代，跨日边界由 ADR-0006 替代
 - 日期：2026-08-13
 - 替代范围：原设计中所有“每次 25 个、同日调用四次”和公开 `run --approve <preview_id>` 规则
 

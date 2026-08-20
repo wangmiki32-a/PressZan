@@ -1,6 +1,6 @@
 # 500px 正向反馈增长 Skill 设计
 
-> 状态：Superseded。本文记录初版 25 赞分组设计，不再代表当前执行合同。当前规则见 [2026-08-13 单次 100 Consolidation 设计](2026-08-13-single-run-100-consolidation-design.md)。
+> 状态：Superseded。本文只记录初版 25 赞分组设计；当前合同见项目 Skill 和 ADR-0004 至 ADR-0006。
 
 ## 1. 目标与边界
 

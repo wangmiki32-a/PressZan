@@ -1,5 +1,7 @@
 # 公开作品回馈周期与临时回顾任务 Implementation Plan
 
+> 状态：Implemented then Superseded。本文只保留旧 cycle/review 实施历史；新运行的最新 3 张即时结算以 ADR-0005 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把一次点赞、冻结的 5 张主页展示作品、+20h 1 日回顾和 +70h 3 日回顾串成可重建周期，并为当前历史周期只创建一次 +70h 回顾任务。

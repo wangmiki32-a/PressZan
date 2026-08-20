@@ -1,6 +1,6 @@
 # Single-Run 100 Consolidation Implementation Plan
 
-> 状态：Implemented。当前运行规则以 `AGENTS.md`、Skill、ADR-0002、代码和测试为准。
+> 状态：Implemented / Partially Superseded。零参数入口和单 run 恢复方向仍有效；100 赞目标由 ADR-0004 替代，跨日边界由 ADR-0006 替代。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

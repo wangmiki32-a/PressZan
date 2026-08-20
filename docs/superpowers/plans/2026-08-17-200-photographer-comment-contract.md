@@ -1,5 +1,7 @@
 # 200 Photographer Coverage and Comment Contract Implementation Plan
 
+> 状态：Implemented / Partially Superseded。200 位覆盖、第一张作品和固定评论仍有效；自然日终止边界由 ADR-0006 替代。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make future daily runs complete after exactly 200 distinct photographers are processed, while commenting `👍👍👍` after every newly confirmed like and preserving historical completion.

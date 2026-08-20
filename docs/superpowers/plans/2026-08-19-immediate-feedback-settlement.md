@@ -1,5 +1,7 @@
 # Immediate Feedback Settlement Implementation Plan
 
+> 状态：Implemented。当前最新 3 张、即时结算和积分账本实现以 ADR-0005、ADR-0006、代码和测试为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把新 500px 任务切换为“启动时扫描本人最新三张、覆盖 200 位后当日立即结算”的反馈积分模型，同时完整保留旧 sealed logs 的只读兼容。

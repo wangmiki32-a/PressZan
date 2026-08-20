@@ -1,5 +1,7 @@
 # PressZan 可迁移交接 Implementation Plan
 
+> 状态：Implemented / Partially Superseded。Git-backed sealed runs、动态 state root 和串行交接仍有效；未来回顾 Automation 步骤由 ADR-0005 替代。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让朋友 clone 私有仓库后，在不复制浏览器凭证的前提下继承 sealed 运行历史，并在任意本地路径安全执行同一 500px 账号的 skill。
