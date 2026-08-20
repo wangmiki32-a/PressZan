@@ -12,20 +12,30 @@
 | [`operations.md`](operations.md) | 如何运行、暂停、恢复和排错？ | 真实执行验证出新的稳定操作经验时 |
 | [`knowledge-gaps.md`](knowledge-gaps.md) | 哪些结论仍缺少真实证据？ | 新证据关闭缺口或发现新的关键未知时 |
 | [`decisions/`](decisions/) | 为什么做出重要且难以逆转的决定？ | 重大设计决策获批准时 |
-| [`superpowers/specs/`](superpowers/specs/) | 某项功能最初如何设计？ | 新功能设计获批准时 |
-| [`superpowers/plans/`](superpowers/plans/) | 某次实施如何拆分？ | 生成新的实施计划时 |
+| [`superpowers/README.md`](superpowers/README.md) | 历史 spec/plan 当前是什么状态？ | 新增或替代设计、计划时 |
 | [`../.agents/skills/500px-feedback-growth/`](../.agents/skills/500px-feedback-growth/) | Codex 如何扫描最新 3 张、执行 200 位覆盖并即时结算？ | 工作流、页面恢复或事件协议变化时 |
 
 ## 项目管理约定
 
-本项目不引入独立看板、外部工单或常驻 backlog。管理单位是一次明确的 Codex 任务：
+每个非平凡任务先明确四个字段：
+
+```text
+Goal:
+Context:
+Constraints:
+Done when:
+```
+
+管理单位是一次有明确完成条件的 Codex 任务：
 
 1. 在线程中说明目标、边界和验收标准。
 2. Codex 先读取 `AGENTS.md`、相关文档、代码、测试和当前 `git status`。
-3. 需要长期判断的变更先写 spec 或 ADR；局部修复直接做最小改动。
+3. 复杂或模糊变更先用 `/plan` 收敛设计；目标明确、耗时较长且可验证的执行可用 `/goal`。局部修复直接做最小改动。
 4. 实施后运行范围匹配的测试、`git diff --check` 和必要的真实只读验证。
 5. 把可复用经验同步到唯一负责该主题的文档，不复制运行流水。
 6. 提交时保持一个 commit 只表达一个清晰决策或完整变更。
+
+默认不引入常驻 Markdown 看板或外部工单。只有存在真实跨线程 backlog 时才使用 GitHub Issues；独立任务可以并行，但不得让两个任务同时写同一状态源、同一 worktree 或同一浏览器账号。
 
 线程可以保存任务讨论和临时证据，但不能成为唯一事实源。任务结束时至少需要满足以下一项：
 
@@ -39,7 +49,7 @@
 - 反复出现且已有稳定解法的页面问题：写入 `docs/operations.md`，执行级细节同步到 skill reference。
 - 会影响所有未来任务的安全边界、事实源、验证要求：写入 `AGENTS.md`。
 - 重大架构选择及其取舍：写入 ADR。
-- 已经完成的实施步骤：保留在 plan 中作为历史，不复制到 README。
+- 已经完成的实施步骤：保留在 plan 中作为非权威历史，并在 [`superpowers/README.md`](superpowers/README.md) 标记状态，不复制到 README。
 
 ## 文档质量检查
 

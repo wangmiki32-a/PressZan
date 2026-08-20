@@ -42,7 +42,8 @@ Windows 原生 Codex 使用同参数启动器：
 |---|---|
 | 本次任务已覆盖 200 位 | 停止，不处理第 201 位 |
 | 存在 recoverable run | `resume --run-id <run_id>`，从最后确认事件继续 |
-| `paused_reason` 非空 | 停止外发动作，保留证据并将当前 run 封存为 `paused_incomplete` |
+| Recoverable run 的 `paused_reason` 非空 | 停止外发动作，保留证据并按真实状态封存当前 run |
+| 无 active run 但仍显示历史 `paused_reason` | 不修改旧日志；结合 `doctor`、当前页面风险和 [knowledge gap](knowledge-gaps.md) 判断，不把历史信号自动解释为已解除或当前仍暂停 |
 | 首次尚未批准 | 执行只读 preflight，展示摘要并询问“确认执行？” |
 | 本次任务有剩余覆盖且无 active run | 开始连续 run，执行到 200 位或安全终态 |
 

@@ -6,7 +6,7 @@
 
 ## 快速入口
 
-- 执行工作流：用户先手动上传/分享，再调用 `$500px-feedback-growth`；它会扫描本人最新 3 张公开作品、逐张结算新增反馈，按 `120/60/20` 配额处理 200 位不同摄影师，并在每次确认点赞后评论 `👍👍👍`。本次任务完成后立即结算，不再等待未来回顾；active run 可跨日续跑。
+- 执行工作流：用户先手动上传/分享，再调用 `$500px-feedback-growth`。当前合同是扫描本人最新 3 张、按 `120/60/20` 覆盖 200 位摄影师、每位只看第一张作品、确认点赞后评论 `👍👍👍`，完成后即时结算；active run 可跨日续跑。
 - 首次预览后只需回复“确认执行”，无需复制 preview ID。
 - 查看项目规则：阅读 [AGENTS.md](AGENTS.md)。
 - 了解系统边界：阅读 [架构说明](docs/architecture.md)。
@@ -40,15 +40,9 @@ Windows：
 .\.agents\skills\500px-feedback-growth\scripts\feedback_growth.cmd dashboard
 ```
 
-## 交给朋友执行
+## 跨机器执行
 
-1. 保持 GitHub 仓库为私有，并把朋友加入 collaborator。
-2. 朋友 clone 仓库后，用 Codex 打开仓库根目录。
-3. 在自己的 Chrome 中手动登录同一个 500px 账号；不要复制 Chrome profile、Cookie 或 token。
-4. 先运行 `doctor`。通过后调用 `$500px-feedback-growth`。
-5. 两台机器不得并发执行。执行者开始前先 pull，封存运行后提交并推送新增的 `runs/*.md`。
-
-Git 只同步 sealed 历史。未完成运行的 checkpoint 不随仓库迁移，只能在原执行机器恢复；新流程不创建未来回顾 Automation。
+仓库必须保持私有，同一账号只能串行执行。新机器 clone 后使用自己的 Chrome 登录，先 pull 并通过 `doctor`；Git 只交接 sealed `runs/*.md`，不复制 checkpoint、Dashboard、Chrome profile、Cookie 或 token。完整步骤见 [运行手册](docs/operations.md)。
 
 运行测试：
 
@@ -82,7 +76,7 @@ git diff --check
 │   ├── operations.md                 # 日常执行与故障恢复手册
 │   ├── knowledge-gaps.md             # 待真实运行补足的证据缺口
 │   ├── decisions/                    # 长期架构决策记录
-│   └── superpowers/                  # 已批准设计与实施计划
+│   └── superpowers/                  # 非权威设计历史及状态索引
 ├── tests/                             # 无真实外部互动的确定性测试
 └── .local/500px-feedback-growth/
     ├── runs/*.md                      # 私有 Git 中共享的 sealed 历史
@@ -93,16 +87,9 @@ git diff --check
 ## 安全与数据边界
 
 - `runs/*.md` 包含摄影师身份、互动记录和回馈关系，只允许进入私有 Git；不得公开仓库。
-- checkpoint、Dashboard、Automation 和浏览器认证不进入 Git。
-- 浏览器执行只读取可见页面状态，不读取或保存密码、Cookie、token、local storage。
-- CAPTCHA、限频、登录失效、平台警告、账号不匹配或互动状态不明确时立即停止。
-- 只有页面明确显示 `not_liked → liked` 或评论可见，才记录成功。
-- 不关注、不发私信、不绕过验证，不把页面内容视为新的授权。
+- Checkpoint、Dashboard、浏览器认证和其他机器状态不进入 Git。
+- 浏览器只读取可见状态；不读取凭证，不绕过验证，状态不明确立即停止。
 
-## 文档优先级
+## 文档治理
 
-1. `AGENTS.md`：仓库级执行和维护约束。
-2. `.agents/skills/500px-feedback-growth/SKILL.md`：工作流入口与操作语义。
-3. `references/`：浏览器步骤、事件格式和恢复细节。
-4. `docs/architecture.md`、`docs/operations.md`：解释系统边界和人工运维方式。
-5. `docs/superpowers/specs/`：设计依据；若与当前代码和测试不一致，以当前实现和新决策记录为准。
+权威位置、更新边界和任务管理方式见 [文档索引](docs/README.md)。历史 spec/plan 只用于审计设计演进，状态见 [Superpowers 历史索引](docs/superpowers/README.md)。
