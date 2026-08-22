@@ -2,10 +2,11 @@ from collections import Counter
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Sequence
 
 from .analytics import COVERAGE_CONTRACT_START_DAY, SHANGHAI, classify_photographer
-from .model import AggregateState
+from .model import AggregateState, RunLog
+from .quality import build_execution_efficiency, build_execution_efficiency_trend
 
 
 STRATEGY_PLAN = {"exploit_first": 120, "new": 60, "retest": 20}
@@ -195,14 +196,54 @@ def _history_tabs(state: AggregateState):
     return tabs
 
 
+def _execution_efficiency(
+    logs: Sequence[RunLog],
+    state: AggregateState,
+    daily_task_id: str,
+) -> Mapping[str, object]:
+    result = build_execution_efficiency(logs, state, daily_task_id)
+    daily = state.daily_tasks.get(daily_task_id)
+    trend = build_execution_efficiency_trend(logs, state, limit=5)
+    return {
+        "gate_status": result.gate_status,
+        "gate_reasons": list(result.gate_reasons),
+        "total_minutes": result.total_minutes,
+        "covered_per_minute": result.covered_per_minute,
+        "speed_score": result.speed_score,
+        "first_pass_score": result.first_pass_score,
+        "first_preview_fill_score": result.first_preview_fill_score,
+        "efficiency_score": result.efficiency_score,
+        "rework_count": result.rework_count,
+        "first_preview_count": result.first_preview_count,
+        "target_count": result.target_count,
+        "confirmed_likes": daily.confirmed_likes if daily else 0,
+        "confirmed_comments": daily.confirmed_comments if daily else 0,
+        "trend": [
+            {
+                "daily_task_id": item.daily_task_id,
+                "efficiency_score": item.efficiency_score,
+                "covered_per_minute": item.covered_per_minute,
+            }
+            for item in trend
+        ],
+    }
+
+
 def build_dashboard_view_model(
     state: AggregateState,
     now: datetime,
     current_daily_task_id: Optional[str] = None,
+    logs: Sequence[RunLog] = (),
 ) -> Mapping[str, object]:
+    current_task = _current_task(state, now, current_daily_task_id)
     return {
         "generated_at": now.isoformat(),
-        "current_task": _current_task(state, now, current_daily_task_id),
+        "current_task": current_task,
+        "execution_efficiency": _execution_efficiency(
+            logs,
+            state,
+            str(current_task["daily_task_id"]),
+        ),
         "latest_feedback_scan": _latest_feedback_scan(state),
         "performance_30d": _performance_30d(state, now),
         "tier_distribution": _tier_distribution(state, now),
@@ -218,12 +259,13 @@ def render_dashboard(
     template_path: Path,
     output_path: Path,
     current_daily_task_id: Optional[str] = None,
+    logs: Sequence[RunLog] = (),
 ) -> Path:
     template = template_path.read_text(encoding="utf-8")
     if template.count("__DASHBOARD_DATA__") != 1:
         raise ValueError("dashboard template must contain exactly one data placeholder")
     payload = json.dumps(
-        build_dashboard_view_model(state, now, current_daily_task_id),
+        build_dashboard_view_model(state, now, current_daily_task_id, logs),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -238,6 +280,7 @@ def generate_dashboard(
     state: AggregateState,
     now: datetime,
     current_daily_task_id: Optional[str] = None,
+    logs: Sequence[RunLog] = (),
 ) -> Path:
     skill_root = Path(__file__).resolve().parents[2]
     return render_dashboard(
@@ -246,4 +289,5 @@ def generate_dashboard(
         skill_root / "assets" / "dashboard.html",
         state_root / "dashboard.html",
         current_daily_task_id,
+        logs,
     )

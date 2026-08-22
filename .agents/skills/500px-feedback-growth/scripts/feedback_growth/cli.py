@@ -1503,7 +1503,7 @@ def command_dashboard(args) -> int:
     now = _now(args.now)
     effective = load_effective_runs(root)
     state = rebuild_state(effective, now)
-    path = generate_dashboard(root, state, now, _active_daily_task_id(root, effective))
+    path = generate_dashboard(root, state, now, _active_daily_task_id(root, effective), effective)
     _json({"ok": True, "path": str(path)})
     return 0
 

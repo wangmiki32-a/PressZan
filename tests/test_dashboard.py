@@ -7,6 +7,7 @@ from tests import bootstrap  # noqa: F401
 from feedback_growth.dashboard import build_dashboard_view_model, render_dashboard
 from feedback_growth.model import AggregateState, DailyTaskStats, FeedbackScan, OutgoingTouch, PhotographerStats
 from tests.helpers import dt
+from tests.test_quality import execution_run, preflight
 
 
 TEMPLATE = Path(__file__).parents[1] / ".agents" / "skills" / "500px-feedback-growth" / "assets" / "dashboard.html"
@@ -101,6 +102,7 @@ class DashboardTest(unittest.TestCase):
             {
                 "generated_at",
                 "current_task",
+                "execution_efficiency",
                 "latest_feedback_scan",
                 "performance_30d",
                 "tier_distribution",
@@ -115,6 +117,28 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(view["strategy_allocation"]["actual"]["exploit_first"], 130)
         self.assertNotIn("cycle", view)
         self.assertNotIn("latency_buckets", view)
+
+    def test_execution_efficiency_card_uses_current_batch_and_latest_five_trend(self):
+        days = [f"2026-08-{day:02d}" for day in range(15, 22)]
+        logs = []
+        tasks = []
+        for index, day in enumerate(reversed(days)):
+            logs.extend((execution_run(day, minutes=40 + index), preflight(day)))
+            tasks.append(daily(day, 1, 1, covered=200, completed_at=dt(int(day[-2:]), 13), comments=1))
+
+        view = build_dashboard_view_model(
+            state_with(tasks=tasks),
+            dt(22, 12),
+            current_daily_task_id=days[-1],
+            logs=logs,
+        )
+
+        efficiency = view["execution_efficiency"]
+        self.assertEqual(efficiency["gate_status"], "pass")
+        self.assertIsNotNone(efficiency["efficiency_score"])
+        self.assertEqual(efficiency["confirmed_likes"], 1)
+        self.assertEqual(efficiency["confirmed_comments"], 1)
+        self.assertEqual([item["daily_task_id"] for item in efficiency["trend"]], days[-5:])
 
     def test_incomplete_scan_is_not_rendered_as_zero_feedback(self):
         now = dt(19, 12)
@@ -189,7 +213,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn('aria-live="polite"', template)
         self.assertIn("prefers-reduced-motion: reduce", template)
         self.assertIn("@media (max-width: 720px)", template)
-        for section_id in ("current-task", "latest-feedback-scan", "performance-30d", "relationship-tiers", "strategy-allocation"):
+        for section_id in ("current-task", "execution-efficiency", "latest-feedback-scan", "performance-30d", "relationship-tiers", "strategy-allocation"):
             self.assertIn(f'id="{section_id}"', template)
         self.assertNotIn("review_1d", template)
         self.assertNotIn("review_3d", template)

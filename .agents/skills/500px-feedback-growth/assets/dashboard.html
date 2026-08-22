@@ -89,6 +89,10 @@
     .scan-fact { padding: 22px 16px 18px 0; }
     .scan-fact span { display: block; color: var(--muted); font-size: 11px; }
     .scan-fact strong { display: block; margin-top: 9px; font: 500 26px/1 var(--mono); }
+    .efficiency-grid { display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--line-strong); }
+    .efficiency-grid .card:nth-child(5) { border-right: 0; }
+    .trend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .trend-item { padding: 8px 10px; border: 1px solid var(--line); color: var(--ink-soft); font: 11px/1.3 var(--mono); }
     .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; background: var(--line); }
     .tier { min-height: 116px; padding: 22px; background: var(--canvas); border-top: 5px solid var(--accent); }
     .tier:nth-child(2) { border-top-color: color-mix(in srgb, var(--accent) 72%, var(--canvas)); }
@@ -123,6 +127,8 @@
     @media (max-width: 900px) {
       .hero { grid-template-columns: 1.15fr .85fr; }
       .card-grid { grid-template-columns: repeat(2, 1fr); }
+      .efficiency-grid { grid-template-columns: repeat(3, 1fr); }
+      .efficiency-grid .card { border-bottom: 1px solid var(--line); }
       .card:nth-child(2) { border-right: 0; }
       .card:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
     }
@@ -137,6 +143,7 @@
       .section-head { display: block; }
       .section-note { margin-top: 10px; text-align: left; }
       .scan-layout { grid-template-columns: 1fr; gap: 22px; }
+      .efficiency-grid { grid-template-columns: 1fr 1fr; }
       .tiers { grid-template-columns: repeat(2, 1fr); }
       .allocation-row { grid-template-columns: 100px 1fr; }
       .allocation-values { grid-column: 2; text-align: left; }
@@ -169,6 +176,18 @@
           <div class="metric"><span>确认评论</span><strong id="comments">0</strong></div>
           <div class="metric"><span>跳过</span><strong id="skipped">0</strong></div>
         </div>
+      </section>
+
+      <section class="section" id="execution-efficiency" aria-labelledby="efficiency-title">
+        <div class="section-head"><h2 id="efficiency-title">执行效率</h2><p class="section-note" id="efficiency-note">仅对完成 200 位覆盖且无安全暂停的即时结算任务评分。</p></div>
+        <div class="efficiency-grid">
+          <div class="card"><span>门槛 / 综合分</span><strong id="efficiency-score">不可评分</strong></div>
+          <div class="card"><span>总耗时（分钟）</span><strong id="efficiency-minutes">—</strong></div>
+          <div class="card"><span>覆盖 / 分钟</span><strong id="efficiency-speed">—</strong></div>
+          <div class="card"><span>一次成功分</span><strong id="efficiency-first-pass">—</strong></div>
+          <div class="card"><span>首轮候选充足分</span><strong id="efficiency-fill">—</strong></div>
+        </div>
+        <div class="trend" id="efficiency-trend" aria-label="最近五个合格批次效率趋势"></div>
       </section>
 
       <section class="section" id="latest-feedback-scan" aria-labelledby="scan-title">
@@ -247,6 +266,18 @@
     byId("coverage-fill").style.width = `${progress}%`;
     byId("coverage-progress").setAttribute("aria-valuenow", String(task.covered_photographers));
     byId("coverage-progress").setAttribute("aria-valuemax", String(target));
+
+    const efficiency = data.execution_efficiency;
+    const efficiencyStatusNames = { pass: "通过", blocked: "未通过", unscorable: "不可评分" };
+    setText("efficiency-score", efficiency.efficiency_score == null ? (efficiencyStatusNames[efficiency.gate_status] || efficiency.gate_status) : `${efficiencyStatusNames[efficiency.gate_status]} / ${efficiency.efficiency_score.toFixed(1)}`);
+    setText("efficiency-minutes", efficiency.total_minutes == null ? "—" : efficiency.total_minutes.toFixed(1));
+    setText("efficiency-speed", efficiency.covered_per_minute == null ? "—" : efficiency.covered_per_minute.toFixed(2));
+    setText("efficiency-first-pass", efficiency.first_pass_score == null ? "—" : efficiency.first_pass_score.toFixed(1));
+    setText("efficiency-fill", efficiency.first_preview_fill_score == null ? "—" : efficiency.first_preview_fill_score.toFixed(1));
+    setText("efficiency-note", efficiency.gate_reasons.length ? `门槛原因：${efficiency.gate_reasons.join("、")}。确认点赞 ${efficiency.confirmed_likes}，确认评论 ${efficiency.confirmed_comments}。` : `确认点赞 ${efficiency.confirmed_likes}，确认评论 ${efficiency.confirmed_comments}；评论仅展示事实，不进入评分门槛。`);
+    const efficiencyTrend = byId("efficiency-trend");
+    if (!efficiency.trend.length) add(efficiencyTrend, "span", "trend-item", "尚无合格批次趋势");
+    else efficiency.trend.forEach(item => add(efficiencyTrend, "span", "trend-item", `${item.daily_task_id} · ${item.efficiency_score.toFixed(1)} · ${item.covered_per_minute.toFixed(2)}/min`));
 
     const scan = data.latest_feedback_scan;
     setText("scan-status", scan.status);
