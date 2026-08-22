@@ -43,7 +43,7 @@ Windows 原生 Codex 使用同参数启动器：
 | 本次任务已覆盖 200 位 | 停止，不处理第 201 位 |
 | 存在 recoverable run | `resume --run-id <run_id>`，从最后确认事件继续 |
 | Recoverable run 的 `paused_reason` 非空 | 停止外发动作，保留证据并按真实状态封存当前 run |
-| 无 active run 但仍显示历史 `paused_reason` | 不修改旧日志；结合 `doctor`、当前页面风险和 [knowledge gap](knowledge-gaps.md) 判断，不把历史信号自动解释为已解除或当前仍暂停 |
+| 无 active run 但仍显示历史 `paused_reason` | 以当前 run 的 status、remaining quota 和事件为准；历史 paused_reason 只作提示，不阻塞已完成或新的安全 run，也不能用来静默解除 active pause |
 | 首次尚未批准 | 执行只读 preflight，展示摘要并询问“确认执行？” |
 | 本次任务有剩余覆盖且无 active run | 开始连续 run，执行到 200 位或安全终态 |
 
@@ -59,13 +59,13 @@ Windows 原生 Codex 使用同参数启动器：
 
 ### Preflight
 
-最新 3 张反馈扫描之后，可只读扫描本人最近 30 幅作品、点赞来源和评论候选，生成 preview。不得点赞、评论、关注或私信。
+最新 3 张反馈扫描之后，先复用这 3 张的点赞者和本地历史生成 preview。不得默认扫描最近 30 幅；候选不足时，从第 4 张本人作品开始按从新到旧顺序增量补充，每次只增加一个来源并重算 preview，达到 200 位即停止。最近 30 幅只是上限。不得点赞、评论、关注或私信。
 
-每页观察立即追加事件。点赞数字存在但列表空白时只刷新一次；仍为空写 `scan_issue: liker_list_unavailable`。
+长列表每批最多 10 位，每页观察立即追加事件。点赞数字存在但列表空白时只刷新一次；仍为空写 `scan_issue: liker_list_unavailable`。
 
 ### 首次批准
 
-用户回复“确认执行”后，skill 解析最新 preview；满足同一 `daily_task_id`、仍在 24 小时有效期且 preview 后没有确认互动，才快速复核。跨过日界线本身不会使 preview 失效。
+每个新 run 只确认一次，run 内不重复询问。用户回复“确认执行”后，skill 解析最新 preview；满足同一 `daily_task_id`、仍在 24 小时有效期且 preview 后没有确认互动，才快速复核。跨过日界线本身不会使 preview 失效。preview 失效时需要确认新的批准对象；运行时或平台强制确认不得绕过。
 
 快速复核只打开候选计划中的唯一 `source_url`。稳定字段、顺序、配额或 digest 变化时返回 `preview_changed`，封存 `approval_rejected` 后重新 preflight。
 
@@ -78,6 +78,7 @@ Windows 原生 Codex 使用同参数启动器：
 5. 每次确认点赞后评论 `👍👍👍`；相同本人评论已可见时不重复，新增评论可见后才记录。
 6. 从评论链或本地队列继续候选。同一个 run 持续到恰好 200 位，不按固定点赞数拆分。
 7. 配额为 `120 exploit_first / 60 new / 20 retest`；确认点赞数可少于 200。
+8. 浏览器每批最多 10 位；每批后读取同一 run 的覆盖和最后事件进行对账。批次只是工具与恢复边界，不创建新 run、不重新批准、不延迟逐动作 checkpoint。
 
 ### 即时结算
 
@@ -107,6 +108,8 @@ Windows 原生 Codex 使用同参数启动器：
 | checkpoint 写入旧 run | 临时命令复用旧 ID | 写入前核对当前 `run_id`、`scan_id` 和绝对 state root，写后检查返回值 |
 | Chrome 有进程但无法连接 | 没有可接管窗口或通信未建立 | 保留 runtime，打开 Chrome 窗口后最多重连一次 |
 | 点赞或评论状态不明确 | 可能重复动作 | 立即 `safety_paused: ambiguous_state`，不重按 |
+| 浏览器调用超时或结果无法解析 | 页面可能已变化，外层没有可靠结果 | 先对账，再决定是否补动作；检查页面、最近 action 和 checkpoint，禁止盲目重按 |
+| GitHub TLS handshake 间歇失败 | Meta Tunnel/fake-IP 或直连链路抖动 | 不得关闭 SSL 校验；验证本地代理后仅设置仓库级 `http.proxy`，端口不得跨机器硬编码 |
 
 更细恢复步骤见 [`operational-recovery.md`](../.agents/skills/500px-feedback-growth/references/operational-recovery.md)。
 
@@ -125,3 +128,10 @@ Windows 原生 Codex 使用同参数启动器：
 4. Dashboard 已从日志重建，而不是手工修改。
 5. 不存在第 201 位摄影师，也没有重复动作或未确认互动。
 6. 新 sealed log 已提交并推送；checkpoint、Dashboard 和认证信息仍未被 Git 跟踪。
+
+## GitHub 网络恢复
+
+1. `fetch`/`push` 出现 TLS handshake 错误时，先运行 `git ls-remote origin HEAD` 做最小只读探测；不要反复执行写操作。
+2. 若启用了 Clash/Meta Tunnel 或 DNS fake-IP，确认本机实际监听的 HTTP 代理端口，再用临时 `git -c http.proxy=http://127.0.0.1:<PORT> ls-remote origin HEAD` 验证。
+3. 临时路径稳定后才写仓库级 `http.proxy`。不得关闭 SSL 校验，不得把本机端口写入共享配置或文档常量。
+4. 推送后再次 fetch 并比较远端 HEAD；偶发抖动使用少量有界重试，不无限循环。

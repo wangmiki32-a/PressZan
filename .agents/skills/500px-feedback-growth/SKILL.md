@@ -44,9 +44,9 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 2. 执行 `status --json`。有 recoverable run 时始终使用 `resume --run-id <run_id>`；跨日继续同一 run，不重置覆盖或创建新任务。
 3. 无可恢复 run 时执行 `begin --mode preflight`，先完成“本人最新 3 张反馈扫描”。
 4. 执行 `feedback-scan-complete --run-id <run_id> --scan-id <scan_id> --completed-photo-id <photo_id>`，为每张已完整读取的作品重复 `--completed-photo-id`。
-5. 记录 `candidate_observed`，执行 `preview --run-id <run_id> --seed <seed>`，封存 preflight 并展示摘要。首次需要询问“确认执行？”。
+5. 先用最新 3 张扫描和本地历史记录 `candidate_observed` 并执行 `preview --run-id <run_id> --seed <seed>`；候选不足时按“增量补充”规则扩展，达到 200 位即停止，然后封存 preflight 并展示摘要。
 6. 用户确认后先执行只读 `latest-preview`，再执行 `begin --mode run --approve-preview <preview_id>` 和 `approve --run-id <run_id> --preview-id <preview_id>`；仅在 `approved=true` 时互动。
-7. 连续处理本次剩余覆盖。完成、安全暂停或候选耗尽时执行 `finish --run-id <run_id> --status <status>`，再执行 `status --json` 和 `dashboard`。
+7. 连续处理本次剩余覆盖。浏览器按每批最多 10 位执行和对账，但不拆分业务 run；完成、安全暂停或候选耗尽时执行 `finish --run-id <run_id> --status <status>`，再执行 `status --json` 和 `dashboard`。
 
 ## 本人最新 3 张反馈扫描
 
@@ -59,20 +59,21 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 
 ## 只读 Preflight 与批准
 
-1. 最新 3 张反馈扫描完成后，可继续从本人最近 30 幅作品、收到的点赞和可见评论中发现候选；不得点赞、评论、关注或私信。
-2. 每次页面观察后立即追加对应事件。候选 preview 上限是本次任务尚未覆盖的摄影师数，最多 200 位。
-3. preview 仍在有效期且之后没有确认互动，只按 `source_url` 分组快速复核已批准候选；不重复扫描全部 30 幅作品或点赞者列表。
-4. `preview_not_found`、`preview_changed`、`preview_expired` 或 `preview_not_latest` 时，封存当前 approval run 为 `approval_rejected`，重新 preflight 并再次请求自然语言确认。
+1. 先复用最新 3 张扫描中的点赞者和本地历史生成 preview；不得默认扫描最近 30 幅，也不得点赞、评论、关注或私信。
+2. 候选不足时，从第 4 张本人作品开始按从新到旧顺序增量补充：每次只增加一个来源，以每批最多 10 位读取并追加观察，再重算 preview；达到 200 位即停止，最近 30 幅只是候选来源上限。
+3. preview 仍在有效期且之后没有确认互动，只按 `source_url` 分组快速复核已批准候选；不重复最新 3 张反馈扫描或已完成的候选来源。
+4. 每个新 run 只确认一次，run 内不重复询问。`preview_not_found`、`preview_changed`、`preview_expired` 或 `preview_not_latest` 表示批准对象已失效：封存当前 approval run 为 `approval_rejected`，重新 preflight 后对新预览重新确认；不得绕过运行时或平台强制确认。
 
 ## 连续覆盖 200 位摄影师
 
 1. 每位候选只检查主页当前第一张作品。已点赞或作品不可读时记录 `candidate_skipped`，并写入批准计划中的 `quota_bucket`；无论点赞或跳过，该摄影师本次任务只处理一次并计入覆盖，完成条件是恰好 200 位不同摄影师。
-2. 点赞前读取 `before_state=not_liked`；点击一次后重新读取同一控件。只有 `after_state=liked` 可见才记录成功。
-3. 每次确认后立即追加 `outgoing_like_confirmed`，新运行使用 `settlement_mode=immediate`；禁止在结束后集中回填。
-4. 每次确认点赞后，在同一作品评论固定文本 `👍👍👍`。当前账号已有相同可见评论时不重复；新增评论只有可见后才追加 `outgoing_comment_confirmed`。状态不明确立即 `safety_paused`。
-5. 配额固定为 `120 exploit_first / 60 new / 20 retest`。桶不足时确定性回填，但不得重复摄影师或处理第 201 位。
-6. `exploit_first` 优先 verified/promising；`retest` 只接纳冷却满 7 天的 dormant；其余进入 new。确认点赞数可以少于 200。
-7. 新触达在任务封存后立即成为一个未反馈轻负样本；后续最新 3 张扫描发现该摄影师新点赞时，同一触达改为 1-3 分正反馈，不同时保留正负。
+2. 用每批最多 10 位作为状态汇报和恢复边界，每批后核对同一 run 的日志覆盖数；这不是新的审批、结算或业务 run。每个确认动作仍立即追加 checkpoint。
+3. 点赞前读取 `before_state=not_liked`；点击一次后重新读取同一控件。只有 `after_state=liked` 可见才记录成功。
+4. 每次确认后立即追加 `outgoing_like_confirmed`，新运行使用 `settlement_mode=immediate`；禁止在结束后集中回填。
+5. 每次确认点赞后，在同一作品评论固定文本 `👍👍👍`。当前账号已有相同可见评论时不重复；新增评论只有可见后才追加 `outgoing_comment_confirmed`。状态不明确立即 `safety_paused`。
+6. 配额固定为 `120 exploit_first / 60 new / 20 retest`。桶不足时确定性回填，但不得重复摄影师或处理第 201 位。
+7. `exploit_first` 优先 verified/promising；`retest` 只接纳冷却满 7 天的 dormant；其余进入 new。确认点赞数可以少于 200。
+8. 新触达在任务封存后立即成为一个未反馈轻负样本；后续最新 3 张扫描发现该摄影师新点赞时，同一触达改为 1-3 分正反馈，不同时保留正负。
 
 ## 积分与分层
 
@@ -93,6 +94,7 @@ Dashboard 展示当前任务、最新 3 张反馈扫描、滚动 30 天表现、
 - CAPTCHA、限频、登录失效、平台警告、账号不匹配或状态不明确：立即追加 `safety_paused` 并停止；不绕过、不切换账号、不重复点击。
 - 候选池和评论链都耗尽：封存为 `incomplete_candidate_exhausted`，不得降低 200 位目标或放宽单人一次约束。
 - 工具或线程中断但页面状态可恢复：保留 active checkpoint；下次零参数启动恢复同一 run。
+- 浏览器超时或输出损坏：先对账当前页面、最近 action 和 checkpoint；未确认前不重放点击。
 - Active run 可跨上海日界线继续，沿用启动时的 `daily_task_id` 和剩余覆盖；相邻新任务启动时间尽量间隔超过 24 小时。
 - Checkpoint 与 sealed log 只追加；聚合状态和 Dashboard 必须能从日志重建。
 

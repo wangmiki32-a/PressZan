@@ -7,6 +7,8 @@
 | 现象 | 原因判断 | 最短处理 |
 |---|---|---|
 | Chrome 进程存在但扩展连接失败 | 没有可接管窗口或扩展通信未建立 | 保留 runtime，打开 Chrome 窗口后重连；读取 Chrome troubleshooting 后最多重试一次 |
+| 长列表或批处理调用超时 | 单次浏览器调用范围过大 | 缩小为每批最多 10 位；保留同一 run，从最后 checkpoint 继续 |
+| 浏览器返回非 JSON | 原生对象、超时文本或调试输出混入结果 | 停止解析；改用 `JSON.stringify` 的单一结果，先对账，再决定是否补动作 |
 | 点赞数字可见、弹层条目为 0 | 异步加载或首次展开失败 | 刷新读取一次；仍为 0 写 `scan_issue: liker_list_unavailable` |
 | 最新 3 张只完成 1-2 张 | 页面或工具中断 | 保留同一 preflight checkpoint；恢复后只补缺失作品，再执行一次 `feedback-scan-complete` |
 | 最新作品更换 | 本人主页展示发生变化 | 以本次 scan 冻结的 3 个 `photo_id` 完成本次扫描；下一次启动重新读取最新 3 张 |
@@ -17,6 +19,7 @@
 | checkpoint 事件落入旧运行 | 临时脚本复用旧 ID | 每次写入前核对 `run_id`、`scan_id`、`state-root`，写后检查返回 position |
 | `resume` 返回 `run_not_recoverable` | run 已 sealed 或不是当前 active run | 回到 `status --json`；只恢复返回的 recoverable run |
 | `begin` 返回 `recoverable_run` | 已存在 active run，包括跨过 Asia/Shanghai 日界线的任务 | 使用返回的 `recoverable_run_id` 恢复；不得创建第二个 run |
+| GitHub TLS handshake 间歇失败 | 直连、Meta Tunnel/fake-IP 或本地代理链路抖动 | 不得关闭 SSL 校验；分别探测直连与已验证代理，成功后仅设置仓库级 `http.proxy` |
 
 ## 扫描恢复
 
@@ -29,10 +32,12 @@
 ## Preview 与连续日任务恢复
 
 - 有效期内且尚无确认互动的 preview 只复核候选计划中的唯一来源页，不重复最新 3 张扫描或完整 30 幅候选扫描。
-- 正常运行不按固定动作数切分；一个 run 持续到恰好覆盖 200 位不同摄影师。
+- 候选不足时从下一张本人作品增量补充，每补充一个来源就重算 preview，达到 200 位即停止；不得从头重跑已有观察。
+- 浏览器以每批最多 10 位执行和对账；这是恢复边界，不是业务切分。一个 run 持续到恰好覆盖 200 位不同摄影师。
 - 每个确认动作独立 checkpoint；中断时恢复同一 `run_id`，不重放已确认动作。
 - Sealed 后 retained checkpoint 只作审计；CLI 拒绝继续 append 或 resume。
 - 浏览器连接丢失但未出现安全警告时保留 active checkpoint；重连后先读 `resume` 输出和页面当前状态。
+- 动作调用超时后必须先对账，再决定是否补动作：checkpoint 已有确认事件则继续下一位；仍是明确未点赞可重试一次；页面已变化但无法证明 `before -> after` 时写 `safety_paused`。
 - 只有覆盖 200 位、安全暂停或候选耗尽时才封存；未知中断不得伪写 `completed`。
 - 跨日 active run 沿用原 `daily_task_id` 和剩余覆盖继续执行；只有完成、候选耗尽或安全暂停时才封存。
 
@@ -57,3 +62,9 @@
 - 普通加载失败最多刷新一次；CAPTCHA、限频、登录失效、平台警告或状态不明立即 `safety_paused`。
 - retry 只补缺失数据，不重复追加候选或覆盖稳定观察。
 - 浏览器工作完成前不要 finalize；需用户继续时保留当前 500px 页面。
+
+## Git TLS 与代理恢复
+
+1. 先用 `git ls-remote origin HEAD` 验证直连；失败时同时检查 DNS 是否走 fake-IP、代理软件是否启用 Meta Tunnel，以及本机已监听的 HTTP 代理端口。
+2. 只有 `git -c http.proxy=http://127.0.0.1:<PORT> ls-remote origin HEAD` 连续成功后，才执行 `git config --local http.proxy http://127.0.0.1:<PORT>`。端口是机器状态，不能写成跨机器常量。
+3. 代理不可用或环境切换后移除失效的仓库级配置，再重新探测。不得使用 `http.sslVerify=false`、替换证书校验或把代理写入项目文件。

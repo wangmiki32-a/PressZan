@@ -65,9 +65,9 @@ flowchart LR
 
 1. `doctor` 和 `status` 负责进入 gate；recoverable run 始终恢复原 run，跨日仍沿用启动时的 `daily_task_id` 和剩余覆盖。
 2. 启动扫描冻结本人最新 3 张公开作品。首次完整出现的作品只建立 baseline；后续新 pair 逐张计分。不完整作品保存 issue，不解释为零反馈。
-3. Preflight 只发现候选并生成带 digest、expiry 和配额快照的批准计划，不产生互动。
+3. Preflight 先复用最新 3 张和历史状态生成候选；不足 200 位时才从下一张本人作品开始增量补充来源，每次补充后重算计划，达到 200 位即停止。最近 30 幅是上限而非默认扫描量。
 4. 每位摄影师每次任务只处理一次，只检查主页第一张作品；点赞或跳过共同计入 200 位覆盖。
-5. 点赞和 `👍👍👍` 评论分别确认并立即 checkpoint。新触达即时进入账本，不创建新 episode、cycle 或未来 review Automation。
+5. 浏览器以每批最多 10 位做执行与恢复对账，但业务上保持同一 run；点赞和 `👍👍👍` 评论仍分别确认并立即 checkpoint。新触达即时进入账本，不创建新 episode、cycle 或未来 review Automation。
 6. 下一次启动扫描发现正反馈时，同一触达从未反馈样本转为 1-3 分正样本，不同时保留正负。
 
 具体页面步骤、批准错误和恢复命令属于 [Skill](../.agents/skills/500px-feedback-growth/SKILL.md) 与 [运行手册](operations.md)，不在架构文档重复维护。
@@ -105,3 +105,5 @@ flowchart LR
 ## 兼容性边界
 
 单元测试验证本地数据合同，不证明 500px 页面结构长期稳定。页面兼容性通过无副作用 preflight 和用户批准的真实批次持续验证；稳定经验写入 [运行手册](operations.md) 和 skill reference。
+
+当前 CLI 仍以单事件追加为公开写入接口。浏览器层可以用有界批次减少上下文和超时，但不能因此延迟确认动作的 checkpoint；是否增加带 schema 校验和原子追加的只读 observation batch 命令，保留为 [知识缺口](knowledge-gaps.md)。

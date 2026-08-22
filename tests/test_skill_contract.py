@@ -178,6 +178,44 @@ class SkillContractTest(unittest.TestCase):
         positions = [workflow.index(command) for command in commands]
         self.assertEqual(positions, sorted(positions))
 
+    def test_candidate_discovery_expands_only_until_plan_is_full(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        browser = (ROOT / "references" / "browser-workflow.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+
+        for text in (skill, browser, operations):
+            self.assertIn("增量补充", text)
+            self.assertIn("达到 200 位即停止", text)
+        self.assertIn("不得默认扫描最近 30 幅", skill)
+        self.assertNotIn("读取最近 30 幅作品", browser)
+
+    def test_browser_work_is_bounded_without_splitting_the_business_run(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        browser = (ROOT / "references" / "browser-workflow.md").read_text(encoding="utf-8")
+        recovery = (ROOT / "references" / "operational-recovery.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+
+        for text in (skill, browser, recovery, operations):
+            self.assertIn("每批最多 10 位", text)
+            self.assertIn("同一 run", text)
+        self.assertIn("JSON.stringify", browser)
+        self.assertIn("不得使用浏览器剪贴板", browser)
+        self.assertIn("先对账，再决定是否补动作", recovery)
+
+    def test_confirmation_and_git_recovery_have_single_clear_paths(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        recovery = (ROOT / "references" / "operational-recovery.md").read_text(encoding="utf-8")
+        agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+
+        for text in (skill, agents, operations):
+            self.assertIn("每个新 run 只确认一次", text)
+            self.assertIn("run 内不重复询问", text)
+        for text in (recovery, operations):
+            self.assertIn("http.proxy", text)
+            self.assertIn("不得关闭 SSL 校验", text)
+        self.assertIn("历史 paused_reason", operations)
+
     def test_event_schema_documents_cycle_events(self):
         text = (ROOT / "references" / "event-schema.md").read_text(encoding="utf-8")
         for event_name in (
