@@ -19,6 +19,7 @@ class DocumentationContractTest(unittest.TestCase):
             DOCS_ROOT / "README.md",
             DOCS_ROOT / "architecture.md",
             DOCS_ROOT / "operations.md",
+            DOCS_ROOT / "quality.md",
             DOCS_ROOT / "knowledge-gaps.md",
             DOCS_ROOT / "decisions" / "README.md",
             SUPERPOWERS_ROOT / "README.md",
@@ -27,6 +28,33 @@ class DocumentationContractTest(unittest.TestCase):
         for path in expected:
             with self.subTest(path=path):
                 self.assertTrue(path.is_file())
+
+    def test_quality_is_the_authority_for_supervision_kpis_and_consolidation(self):
+        index = read(DOCS_ROOT / "README.md")
+        quality = read(DOCS_ROOT / "quality.md")
+
+        self.assertIn("quality.md", index)
+        for value in (
+            "feedback_supervisor",
+            "read-only",
+            "supervisor_degraded",
+            "speed_score",
+            "first_pass_score",
+            "first_preview_fill_score",
+            "efficiency_score",
+            "50/100/150",
+            "10 分",
+            "10%",
+            "60 次触达",
+            "5 个合格批次",
+        ):
+            self.assertIn(value, quality)
+        self.assertIn("评论", quality)
+        self.assertIn("不进入", quality)
+        self.assertIn("token", quality)
+        self.assertIn("不纳入", quality)
+        self.assertIn("前次结论不可访问时", quality)
+        self.assertIn("权限来自用户批准", quality)
 
     def test_superpowers_index_covers_every_artifact_and_each_has_status(self):
         index = read(SUPERPOWERS_ROOT / "README.md")

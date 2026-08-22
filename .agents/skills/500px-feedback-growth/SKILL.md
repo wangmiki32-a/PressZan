@@ -22,7 +22,7 @@ description: Use when a user asks to run, resume, preview, inspect, or visualize
 | `dashboard` | 从日志重建本地 Dashboard |
 | `doctor` | 只读检查迁移状态、Git 边界和聚合证据 |
 
-用户不需要输入 `preview_id`、`run_id` 或内部 CLI 参数。执行 preflight 或真实互动前，完整读取 [浏览器工作流](references/browser-workflow.md) 和 [运行恢复手册](references/operational-recovery.md)；重建或解释 Dashboard 前读取 [Dashboard 统计语义](references/dashboard-semantics.md)；排查事件时读取 [事件 schema](references/event-schema.md)。
+用户不需要输入 `preview_id`、`run_id` 或内部 CLI 参数。执行 preflight 或真实互动前，完整读取 [浏览器工作流](references/browser-workflow.md)、[运行恢复手册](references/operational-recovery.md) 和 [执行质量规则](../../../docs/quality.md)；重建或解释 Dashboard 前读取 [Dashboard 统计语义](references/dashboard-semantics.md)；排查事件时读取 [事件 schema](references/event-schema.md)。
 
 macOS/Linux 内部命令：
 
@@ -42,11 +42,12 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 
 1. 执行 `doctor`；只有 `ok=true` 才继续。
 2. 执行 `status --json`。有 recoverable run 时始终使用 `resume --run-id <run_id>`；跨日继续同一 run，不重置覆盖或创建新任务。
-3. 无可恢复 run 时执行 `begin --mode preflight`，先完成“本人最新 3 张反馈扫描”。
-4. 执行 `feedback-scan-complete --run-id <run_id> --scan-id <scan_id> --completed-photo-id <photo_id>`，为每张已完整读取的作品重复 `--completed-photo-id`。
-5. 先用最新 3 张扫描和本地历史记录 `candidate_observed` 并执行 `preview --run-id <run_id> --seed <seed>`；候选不足时按“增量补充”规则扩展，达到 200 位即停止，然后封存 preflight 并展示摘要。
-6. 用户确认后先执行只读 `latest-preview`，再执行 `begin --mode run --approve-preview <preview_id>` 和 `approve --run-id <run_id> --preview-id <preview_id>`；仅在 `approved=true` 时互动。
-7. 连续处理本次剩余覆盖。浏览器按每批最多 10 位执行和对账，但不拆分业务 run；完成、安全暂停或候选耗尽时执行 `finish --run-id <run_id> --status <status>`，再执行 `status --json` 和 `dashboard`。
+3. `doctor/status` 后为本次任务实例化一次项目级只读 `feedback_supervisor`。不可用时由主 Agent按同一五段格式审计，并明确标记 `supervisor_degraded`，不得伪称独立监督。
+4. 无可恢复 run 时执行 `begin --mode preflight`，先完成“本人最新 3 张反馈扫描”。
+5. 执行 `feedback-scan-complete --run-id <run_id> --scan-id <scan_id> --completed-photo-id <photo_id>`，为每张已完整读取的作品重复 `--completed-photo-id`。
+6. 先用最新 3 张扫描和本地历史记录 `candidate_observed` 并执行 `preview --run-id <run_id> --seed <seed>`；候选不足时按“增量补充”规则扩展，达到 200 位即停止，然后封存 preflight。监督员在展示摘要和用户确认前完成首次审计。
+7. 用户确认后先执行只读 `latest-preview`，再执行 `begin --mode run --approve-preview <preview_id>` 和 `approve --run-id <run_id> --preview-id <preview_id>`；仅在 `approved=true` 时互动。
+8. 连续处理本次剩余覆盖。浏览器按每批最多 10 位执行和对账，但不拆分业务 run；覆盖达到 50/100/150 位时向同一监督员发送压缩状态，每 10 位对账不启动新的监督模型。完成、安全暂停或候选耗尽时执行 `finish --run-id <run_id> --status <status>`，再执行 `status --json` 和 `dashboard`；终态后由监督员读取 sealed 事实做最终审计与 Consolidation 判断。
 
 ## 本人最新 3 张反馈扫描
 
@@ -87,7 +88,7 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 
 ## Dashboard
 
-Dashboard 展示当前任务、最新 3 张反馈扫描、滚动 30 天表现、关系分层/排行和 `120/60/20` 策略配额。每 100 次触达反馈分的分子是反馈分、分母是触达次数，允许超过 100；不得命名为回馈率。不完整扫描明确显示“数据不完整”。默认浅色，深色只由用户手动切换。
+Dashboard 展示当前任务、执行效率、最新 3 张反馈扫描、滚动 30 天表现、关系分层/排行和 `120/60/20` 策略配额。效率卡只从 sealed logs 确定性重建门槛、综合分、耗时、覆盖速度、一次成功、候选充足度和最近 5 个合格批次趋势；点赞/评论只展示事实，滚动反馈效果是独立护栏。完整公式与监督闭环见 [执行质量规则](../../../docs/quality.md)。每 100 次触达反馈分允许超过 100，不得命名为回馈率。不完整扫描明确显示“数据不完整”。默认浅色，深色只由用户手动切换。
 
 ## 停止与恢复
 

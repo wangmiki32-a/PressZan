@@ -10,6 +10,7 @@
 | [`../README.md`](../README.md) | 项目是什么，如何开始？ | 入口、命令或目录变化时 |
 | [`architecture.md`](architecture.md) | 系统如何组成，事实源和不变量是什么？ | 组件边界、数据流、算法合同变化时 |
 | [`operations.md`](operations.md) | 如何运行、暂停、恢复和排错？ | 真实执行验证出新的稳定操作经验时 |
+| [`quality.md`](quality.md) | 如何监督执行、计算效率并触发 Consolidation？ | KPI、监督权限或持续改进触发条件变化时 |
 | [`knowledge-gaps.md`](knowledge-gaps.md) | 哪些结论仍缺少真实证据？ | 新证据关闭缺口或发现新的关键未知时 |
 | [`decisions/`](decisions/) | 为什么做出重要且难以逆转的决定？ | 重大设计决策获批准时 |
 | [`superpowers/README.md`](superpowers/README.md) | 历史 spec/plan 当前是什么状态？ | 新增或替代设计、计划时 |

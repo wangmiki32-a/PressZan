@@ -14,9 +14,12 @@ flowchart LR
     W --> C["Append-only checkpoint"]
     C --> L["Sealed Markdown run log"]
     L --> R["analytics 即时账本"]
+    L --> Q["quality 执行效率"]
     L --> Y["cycles legacy 重建"]
     R --> S["selector 120/60/20"]
     R --> D["Dashboard 派生视图"]
+    Q --> D
+    Q --> V["feedback_supervisor\n只读审计"]
     S --> P["Preview + digest"]
     P --> A["用户批准 / 快速复核"]
     A --> W
@@ -32,13 +35,18 @@ flowchart LR
 - `workspace.py`：定位 checkout、主仓库和唯一状态根，并检查 Git 边界。
 - `analytics.py`：按事件时间重建触达、最新 3 张扫描、0-3 分反馈账本、原始/有效分和摄影师状态。
 - `selector.py`：在 `120 exploit_first / 60 new / 20 retest`、200 人覆盖和单人上限内确定性选择。
+- `quality.py`：从 sealed run、关联 preflight 和聚合状态确定性重建门槛、耗时、速度、返工和效率分。
 - `cycles.py`：只读重建旧 cycle/review/episode，用于历史兼容，不再参与新运行 gate。
 - `automation.py`：保留旧调度请求的纯数据生成能力；新运行不调用。
 - `cli.py`：编排 run、preview 审批、扫描完成事件、即时结算和错误码。
 
 ### 展示层
 
-`dashboard.py` 从聚合状态生成自包含 HTML，不加载远程资源或保存独立业务状态。主视图是当前任务、最新反馈扫描、滚动 30 天表现、关系分层/排行和策略配额；策略实际值按点赞或跳过产生的首次摄影师覆盖统计。旧 cycle/review 不进入主指标。完整口径见 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。
+`dashboard.py` 从聚合状态和有效日志生成自包含 HTML，不加载远程资源或保存独立业务状态。主视图是当前任务、执行效率、最新反馈扫描、滚动 30 天表现、关系分层/排行和策略配额；策略实际值按点赞或跳过产生的首次摄影师覆盖统计。旧 cycle/review 不进入主指标。完整口径见 [Dashboard 统计语义](../.agents/skills/500px-feedback-growth/references/dashboard-semantics.md) 和 [执行质量规则](quality.md)。
+
+### 监督层
+
+`.codex/agents/feedback-supervisor.toml` 定义项目级 `read-only` 观察员。它只读取主 Agent提供的 preflight 摘要、50/100/150 压缩状态和 terminal sealed 事实，不操作 Chrome、不写事件、不修改项目。监督输出保留在线程，长期结论由主 Agent按 [质量规则](quality.md)沉淀；系统不新增监督事件、CLI、状态库或逐批报告文件。
 
 ## 事实源层级
 
@@ -49,6 +57,7 @@ flowchart LR
 | 已完成运行 | `.local/.../runs/*.md` | 否，sealed 后不可覆盖；在私有 Git 中共享 |
 | 积分、分层和候选状态 | 从有效日志重建 | 否，属于派生状态 |
 | Dashboard | 从聚合状态生成 | 可以重建，不作为输入 |
+| 执行效率 KPI | 从 sealed run、关联 preflight 和聚合状态生成 | 否，属于派生状态 |
 | 设计和工作约定 | Git 中的文档、代码、测试、ADR | 通过正常变更流程维护 |
 
 具体持久化决策见 [ADR-0001](decisions/ADR-0001-append-only-event-log.md) 和 [ADR-0003](decisions/ADR-0003-git-backed-sealed-runs.md)。
@@ -68,7 +77,8 @@ flowchart LR
 3. Preflight 先复用最新 3 张和历史状态生成候选；不足 200 位时才从下一张本人作品开始增量补充来源，每次补充后重算计划，达到 200 位即停止。最近 30 幅是上限而非默认扫描量。
 4. 每位摄影师每次任务只处理一次，只检查主页第一张作品；点赞或跳过共同计入 200 位覆盖。
 5. 浏览器以每批最多 10 位做执行与恢复对账，但业务上保持同一 run；点赞和 `👍👍👍` 评论仍分别确认并立即 checkpoint。新触达即时进入账本，不创建新 episode、cycle 或未来 review Automation。
-6. 下一次启动扫描发现正反馈时，同一触达从未反馈样本转为 1-3 分正样本，不同时保留正负。
+6. 同一 `feedback_supervisor` 在 preflight、50/100/150 和 terminal 节点做只读审计；普通 10 位 checkpoint 不启动新模型。
+7. 下一次启动扫描发现正反馈时，同一触达从未反馈样本转为 1-3 分正样本，不同时保留正负。
 
 具体页面步骤、批准错误和恢复命令属于 [Skill](../.agents/skills/500px-feedback-growth/SKILL.md) 与 [运行手册](operations.md)，不在架构文档重复维护。
 

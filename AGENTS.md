@@ -20,8 +20,9 @@
 2. [docs/README.md](docs/README.md)：文档职责与维护规则。
 3. 涉及算法、状态或 Dashboard 时读取 [docs/architecture.md](docs/architecture.md)；重建或修改 Dashboard 还要读取 [Dashboard 统计语义](.agents/skills/500px-feedback-growth/references/dashboard-semantics.md)。
 4. 涉及真实浏览器执行、恢复或本地状态时读取 [docs/operations.md](docs/operations.md)。
-5. 执行 `preflight` 或 `run` 前，必须完整读取 skill 的 [SKILL.md](.agents/skills/500px-feedback-growth/SKILL.md)、[浏览器工作流](.agents/skills/500px-feedback-growth/references/browser-workflow.md) 和 [运行恢复手册](.agents/skills/500px-feedback-growth/references/operational-recovery.md)。
-6. 修改事件或日志结构时，额外读取 [事件 schema](.agents/skills/500px-feedback-growth/references/event-schema.md) 和相关 ADR。
+5. 涉及真实点赞、监督、效率 KPI 或 Consolidation 时读取 [docs/quality.md](docs/quality.md)。
+6. 执行 `preflight` 或 `run` 前，必须完整读取 skill 的 [SKILL.md](.agents/skills/500px-feedback-growth/SKILL.md)、[浏览器工作流](.agents/skills/500px-feedback-growth/references/browser-workflow.md) 和 [运行恢复手册](.agents/skills/500px-feedback-growth/references/operational-recovery.md)。
+7. 修改事件或日志结构时，额外读取 [事件 schema](.agents/skills/500px-feedback-growth/references/event-schema.md) 和相关 ADR。
 
 ## 事实源与文件边界
 
@@ -38,6 +39,7 @@
 
 - 公开入口是零参数 `$500px-feedback-growth`；每个新 run 只确认一次，真实互动前需要用户对有效预览明确回复“确认执行”，run 内不重复询问。运行时或平台强制确认不能绕过。
 - 浏览器变更前必须先通过 `doctor`，再读取 `status --json`；有 recoverable run 时恢复原 run。
+- `doctor/status` 后每次任务必须实例化一次项目级只读 `feedback_supervisor`；preflight 批准前、覆盖 50/100/150 和 terminal 后按 [质量规则](docs/quality.md)审计。不可用时主 Agent按同格式执行并标记 `supervisor_degraded`。
 - Active run 可跨 Asia/Shanghai 日界线继续，沿用启动时的 `daily_task_id` 和剩余覆盖；相邻新任务尽量间隔超过 24 小时。
 - 每次新任务先扫描本人主页最新 3 张公开作品；首次完整扫描只建立 baseline，后续新 pair 逐张计反馈分。不完整作品不得按零反馈解释。
 - 候选先复用最新 3 张扫描和本地历史；不足 200 位时才从下一张本人作品开始增量补充，每补充一个来源就重新检查候选充足度，达到 200 位即停止，不默认扫描最近 30 幅。
@@ -62,11 +64,11 @@
 
 - 修改前先搜索现有实现、测试和文档，优先做最小完整改动。
 - 运行逻辑保持 Python 3.9 标准库兼容；新增生产依赖前必须获得用户确认。
-- 保持模块职责：`store.py` 管日志，`workspace.py` 解析仓库/状态根并检查 Git 边界，`cycles.py` 重建周期和 scoped evidence，`analytics.py` 聚合状态，`selector.py` 选候选，`automation.py` 生成纯数据调度请求，`dashboard.py` 生成视图，`cli.py` 编排命令。
+- 保持模块职责：`store.py` 管日志，`workspace.py` 解析仓库/状态根并检查 Git 边界，`cycles.py` 重建周期和 scoped evidence，`analytics.py` 聚合状态，`selector.py` 选候选，`quality.py` 重建执行效率，`automation.py` 生成纯数据调度请求，`dashboard.py` 生成视图，`cli.py` 编排命令。
 - 事件 schema、归因、配额、安全停机或 preview 审批行为变化时，必须先补测试，再同步 `SKILL.md`、对应 reference、架构/运行文档和必要 ADR。
 - 不使用真实点赞或评论做自动化测试；测试必须使用临时状态目录、固定时钟和固定随机种子。
 - 统计聚合必须按事件时间和业务主键确定性排序，不能依赖文件遍历、字典插入或 worktree 当前目录顺序。
-- Dashboard 主视图只消费即时反馈账本：当前任务、最新 3 张反馈扫描、滚动 30 天表现、关系分层/排行和 `120/60/20` 策略配额。旧 cycle/review 只读兼容，不进入主指标。
+- Dashboard 主视图只消费可重建事实：当前任务、执行效率、最新 3 张反馈扫描、滚动 30 天表现、关系分层/排行和 `120/60/20` 策略配额。旧 cycle/review 只读兼容，不进入主指标。
 - 每 100 次触达反馈分允许超过 100；必须写清“反馈分”和“触达”单位，不得标成摄影师回馈率。
 - Dashboard 默认浅色，深色仅由用户手动切换；不得展示无法从事件日志重建的指标。
 
@@ -97,6 +99,7 @@ Windows 原生环境使用 `.\.venv\Scripts\python.exe -m unittest discover -v`�
 - `README.md` 只维护入口、目录和最常用命令。
 - `docs/architecture.md` 解释为什么这样设计及组件边界。
 - `docs/operations.md` 保存人工运行、故障判定和已验证恢复路径。
+- `docs/quality.md` 是监督员、效率 KPI、监督降级、自动改进权限和 Consolidation 触发条件的唯一权威来源。
 - `docs/knowledge-gaps.md` 只保存会影响未来安全、算法或可靠性且仍缺真实证据的问题。
 - `.agents/skills/.../references/` 保存 Codex 执行真实页面时必须遵守的细节。
 - 新的重大、长期且难以从代码推断的决策写入 `docs/decisions/ADR-XXXX-*.md`；小修复不创建 ADR。

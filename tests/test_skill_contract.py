@@ -7,6 +7,74 @@ PROJECT_ROOT = Path(__file__).parents[1]
 
 
 class SkillContractTest(unittest.TestCase):
+    def test_feedback_supervisor_is_project_scoped_read_only_and_has_fixed_output(self):
+        path = PROJECT_ROOT / ".codex" / "agents" / "feedback-supervisor.toml"
+        self.assertTrue(path.is_file())
+        text = path.read_text(encoding="utf-8")
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            data = None
+        else:
+            data = tomllib.loads(text)
+        if data is not None:
+            self.assertEqual(data["name"], "feedback_supervisor")
+            self.assertEqual(data["model"], "gpt-5.6-terra")
+            self.assertEqual(data["model_reasoning_effort"], "high")
+            self.assertEqual(data["sandbox_mode"], "read-only")
+            instructions = data["developer_instructions"]
+            self.assertIsInstance(instructions, str)
+        else:
+            for field in (
+                'name = "feedback_supervisor"',
+                'model = "gpt-5.6-terra"',
+                'model_reasoning_effort = "high"',
+                'sandbox_mode = "read-only"',
+            ):
+                self.assertIn(field, text)
+            instructions = text
+
+        for contract in (
+            "Verdict",
+            "KPI",
+            "Problems",
+            "Actions",
+            "Consolidation",
+            "不得操作 Chrome",
+            "不得修改项目文件",
+            "不得写日志",
+            "不得改变候选",
+            "不得改变算法",
+            "不得改变配额",
+            "不得批准",
+            "不得改变安全边界",
+        ):
+            self.assertIn(contract, instructions)
+        for forbidden in ("摄影师身份", "候选名单", "run ID", "preview ID"):
+            self.assertIn(forbidden, instructions)
+
+    def test_supervisor_workflow_is_mandatory_and_degrades_explicitly(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+        quality = (PROJECT_ROOT / "docs" / "quality.md").read_text(encoding="utf-8")
+
+        for text in (skill, agents, operations, quality):
+            self.assertIn("feedback_supervisor", text)
+            self.assertIn("supervisor_degraded", text)
+        self.assertLess(skill.index("doctor"), skill.index("feedback_supervisor"))
+        self.assertLess(skill.index("status --json"), skill.index("feedback_supervisor"))
+        for checkpoint in ("50", "100", "150"):
+            self.assertIn(checkpoint, skill)
+        self.assertIn("压缩状态", skill)
+        self.assertIn("sealed", skill)
+        self.assertIn("每批最多 10 位", skill)
+        self.assertIn("不启动新的监督模型", skill)
+        dashboard = (ROOT / "references" / "dashboard-semantics.md").read_text(encoding="utf-8")
+        self.assertIn("执行效率", dashboard)
+        self.assertIn("docs/quality.md", dashboard)
+        self.assertIn("初始化，不输出审计结论", quality)
+
     def test_portable_handoff_contract_is_explicit(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         recovery = (ROOT / "references" / "operational-recovery.md").read_text(encoding="utf-8")

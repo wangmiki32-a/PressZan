@@ -9,6 +9,7 @@
 - [`SKILL.md`](../.agents/skills/500px-feedback-growth/SKILL.md)
 - [`browser-workflow.md`](../.agents/skills/500px-feedback-growth/references/browser-workflow.md)
 - [`operational-recovery.md`](../.agents/skills/500px-feedback-growth/references/operational-recovery.md)
+- [`quality.md`](quality.md)
 
 ## 状态根解析
 
@@ -38,6 +39,8 @@ Windows 原生 Codex 使用同参数启动器：
 
 `doctor` 必须先通过。它只读验证路径、sealed logs、聚合证据和 Git 边界，不访问 500px 或读取凭证。
 
+`doctor/status` 后为本次任务实例化一次项目级只读 `feedback_supervisor`。子 agent 不可用时由主 Agent执行同格式审计，并在 `Verdict` 标记 `supervisor_degraded`；不得伪称独立监督。
+
 | 状态 | 动作 |
 |---|---|
 | 本次任务已覆盖 200 位 | 停止，不处理第 201 位 |
@@ -63,6 +66,8 @@ Windows 原生 Codex 使用同参数启动器：
 
 长列表每批最多 10 位，每页观察立即追加事件。点赞数字存在但列表空白时只刷新一次；仍为空写 `scan_issue: liker_list_unavailable`。
 
+Preflight 封存后、用户确认前，监督员先审计候选数量、首次 preview 充足度、重算/issue 和批准边界；监督员只输出建议，不批准互动。
+
 ### 首次批准
 
 每个新 run 只确认一次，run 内不重复询问。用户回复“确认执行”后，skill 解析最新 preview；满足同一 `daily_task_id`、仍在 24 小时有效期且 preview 后没有确认互动，才快速复核。跨过日界线本身不会使 preview 失效。preview 失效时需要确认新的批准对象；运行时或平台强制确认不得绕过。
@@ -79,6 +84,7 @@ Windows 原生 Codex 使用同参数启动器：
 6. 从评论链或本地队列继续候选。同一个 run 持续到恰好 200 位，不按固定点赞数拆分。
 7. 配额为 `120 exploit_first / 60 new / 20 retest`；确认点赞数可少于 200。
 8. 浏览器每批最多 10 位；每批后读取同一 run 的覆盖和最后事件进行对账。批次只是工具与恢复边界，不创建新 run、不重新批准、不延迟逐动作 checkpoint。
+9. 覆盖达到 50/100/150 位时只向同一 `feedback_supervisor` 发送压缩状态；普通 10 位 checkpoint 不启动新的监督模型。
 
 ### 即时结算
 
@@ -86,6 +92,7 @@ Windows 原生 Codex 使用同参数启动器：
 2. 不创建新的 cycle、72 小时 episode 或未来 review Automation。
 3. 下次启动扫描发现某摄影师的新点赞时，每张作品计 1 分并归到其最近触达，单次触达最多 3 分；该触达不再同时保留未反馈状态。
 4. 原始分不封顶，有效分按 30 天半衰期衰减并封顶 12。
+5. terminal 后先读取 sealed 事实生成效率 KPI，再由监督员完成最终审计和 Consolidation 判断；规则见 [`quality.md`](quality.md)。
 
 ## 跨机器串行交接
 
@@ -128,6 +135,7 @@ Windows 原生 Codex 使用同参数启动器：
 4. Dashboard 已从日志重建，而不是手工修改。
 5. 不存在第 201 位摄影师，也没有重复动作或未确认互动。
 6. 新 sealed log 已提交并推送；checkpoint、Dashboard 和认证信息仍未被 Git 跟踪。
+7. 最终监督审计已完成；若降级则明确记录 `supervisor_degraded`，触发的低风险文档/Skill/测试改进已验证。
 
 ## GitHub 网络恢复
 
