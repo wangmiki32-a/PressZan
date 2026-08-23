@@ -68,13 +68,14 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 ## 连续覆盖 200 位摄影师
 
 1. 每位候选只检查主页当前第一张作品。已点赞或作品不可读时记录 `candidate_skipped`，并写入批准计划中的 `quota_bucket`；无论点赞或跳过，该摄影师本次任务只处理一次并计入覆盖，完成条件是恰好 200 位不同摄影师。
-2. 用每批最多 10 位作为状态汇报和恢复边界，每批后核对同一 run 的日志覆盖数；这不是新的审批、结算或业务 run。每个确认动作仍立即追加 checkpoint。
-3. 点赞前读取 `before_state=not_liked`；点击一次后重新读取同一控件。只有 `after_state=liked` 可见才记录成功。
-4. 每次确认后立即追加 `outgoing_like_confirmed`，新运行使用 `settlement_mode=immediate`；禁止在结束后集中回填。
-5. 每次确认点赞后，在同一作品评论固定文本 `👍👍👍`。当前账号已有相同可见评论时不重复；新增评论只有可见后才追加 `outgoing_comment_confirmed`。状态不明确立即 `safety_paused`。
-6. 配额固定为 `120 exploit_first / 60 new / 20 retest`。桶不足时确定性回填，但不得重复摄影师或处理第 201 位。
-7. `exploit_first` 优先 verified/promising；`retest` 只接纳冷却满 7 天的 dormant；其余进入 new。确认点赞数可以少于 200。
-8. 新触达在任务封存后立即成为一个未反馈轻负样本；后续最新 3 张扫描发现该摄影师新点赞时，同一触达改为 1-3 分正反馈，不同时保留正负。
+2. 候选主页 URL 必须包含计划中的稳定摄影师 ID。进入第一张作品后，上传者稳定 actor 链接或图片资源 URL 中的稳定摄影师 ID 满足任一即可作为正向 owner 证据；两者都缺失或任一可见证据发生冲突时立即 `safety_paused`，不得点击。
+3. 用每批最多 10 位作为状态汇报和恢复边界，每批后核对同一 run 的日志覆盖数；这不是新的审批、结算或业务 run。每个确认动作仍立即追加 checkpoint。
+4. 点赞前读取 `before_state=not_liked`；点击一次后重新读取同一控件。只有 `after_state=liked` 可见才记录成功。
+5. 每次确认后立即追加 `outgoing_like_confirmed`，新运行使用 `settlement_mode=immediate`；禁止在结束后集中回填。
+6. 每次确认点赞后，在同一作品评论固定文本 `👍👍👍`。当前账号已有相同可见评论时不重复；新增评论只有可见后才追加 `outgoing_comment_confirmed`。状态不明确立即 `safety_paused`。
+7. 配额固定为 `120 exploit_first / 60 new / 20 retest`。桶不足时确定性回填，但不得重复摄影师或处理第 201 位。
+8. `exploit_first` 优先 verified/promising；`retest` 只接纳冷却满 7 天的 dormant；其余进入 new。确认点赞数可以少于 200。
+9. 新触达在任务封存后立即成为一个未反馈轻负样本；后续最新 3 张扫描发现该摄影师新点赞时，同一触达改为 1-3 分正反馈，不同时保留正负。
 
 ## 积分与分层
 

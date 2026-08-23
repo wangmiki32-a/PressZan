@@ -70,7 +70,16 @@ def preflight(day, *, minutes=10, first_count=197, preview_count=2, scan_issues=
     )
 
 
-def execution_run(day, *, minutes=46, covered=TARGET, status="completed", safety_paused=False, legacy=False):
+def execution_run(
+    day,
+    *,
+    minutes=46,
+    covered=TARGET,
+    status="completed",
+    safety_paused=False,
+    legacy=False,
+    run_id=None,
+):
     day_number = int(day[-2:])
     started = dt(day_number, 12, 10)
     events = [
@@ -102,7 +111,7 @@ def execution_run(day, *, minutes=46, covered=TARGET, status="completed", safety
         events.append(event("safety_paused", started + timedelta(minutes=2), reason="captcha"))
     return RunLog(
         1,
-        f"{day}-run",
+        run_id or f"{day}-run",
         day,
         "run",
         status,
@@ -177,6 +186,29 @@ class ExecutionEfficiencyTest(unittest.TestCase):
                 self.assertEqual(result.gate_status, "blocked")
                 self.assertIn(expected_reason, result.gate_reasons)
                 self.assertIsNone(result.efficiency_score)
+
+    def test_split_recovery_keeps_daily_safety_failure_and_is_not_scored_as_one_run(self):
+        day = "2026-08-19"
+        paused = execution_run(
+            day,
+            minutes=35,
+            covered=142,
+            status="paused_incomplete",
+            safety_paused=True,
+            run_id="paused-part",
+        )
+        completed = execution_run(day, covered=58, run_id="completed-part")
+
+        result = build_execution_efficiency(
+            [preflight(day), paused, completed],
+            state(task(day)),
+            day,
+        )
+
+        self.assertEqual(result.gate_status, "blocked")
+        self.assertIn("coverage_not_200", result.gate_reasons)
+        self.assertIn("safety_paused", result.gate_reasons)
+        self.assertIsNone(result.efficiency_score)
 
     def test_missing_preflight_is_unscorable(self):
         day = "2026-08-19"

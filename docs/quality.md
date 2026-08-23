@@ -36,6 +36,8 @@ Custom agent 不可用、上下文中断或工具不支持委派时，主 Agent�
 
 完成或安全门槛失败返回 `blocked`；缺运行、缺关联 preflight、legacy 结算或时长无效返回 `unscorable`。两者都不生成综合分。旧日志继续可解析，但不强行进入新速度基线。
 
+评分入口按 `daily_task_id 聚合` 关联事实，但评分主体仍是该任务最后一个 terminal run；日任务累计完成不能替代“单一 run 恰好覆盖 200 位”的门槛。发生分片恢复时，若最后 run 未独立覆盖 200 位，则返回 `coverage_not_200`；任一关联 run 出现 `safety_paused` 都同时返回 `safety_paused`。因此恢复片段的时长和覆盖不能拼接或冒充一个合格效率样本。
+
 ## KPI 公式
 
 ```text

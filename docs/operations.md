@@ -77,14 +77,15 @@ Preflight 封存后、用户确认前，监督员先审计候选数量、首次 
 ### 点赞执行
 
 1. 候选主页只检查当前第一张作品。
-2. 已点赞或不可读时记录 `candidate_skipped`，写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖；未点赞才点击。
-3. 只接受同一控件 `before_state=not_liked -> after_state=liked`。
-4. 页面确认后立即追加 `outgoing_like_confirmed`；新运行自动使用 `settlement_mode=immediate`。
-5. 每次确认点赞后评论 `👍👍👍`；相同本人评论已可见时不重复，新增评论可见后才记录。
-6. 从评论链或本地队列继续候选。同一个 run 持续到恰好 200 位，不按固定点赞数拆分。
-7. 配额为 `120 exploit_first / 60 new / 20 retest`；确认点赞数可少于 200。
-8. 浏览器每批最多 10 位；每批后读取同一 run 的覆盖和最后事件进行对账。批次只是工具与恢复边界，不创建新 run、不重新批准、不延迟逐动作 checkpoint。
-9. 覆盖达到 50/100/150 位时只向同一 `feedback_supervisor` 发送压缩状态；普通 10 位 checkpoint 不启动新的监督模型。
+2. 身份校验要求账号正确、页面无阻断信号且候选主页 URL 含稳定摄影师 ID；作品页以上传者稳定 actor 链接或图片资源 URL 中的稳定摄影师 ID 满足任一作为正向 owner 证据。两者都缺失或任一可见证据冲突时安全暂停；vanity slug 不同或 CDN 路径缺少 ID 本身不是冲突。
+3. 已点赞或不可读时记录 `candidate_skipped`，写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖；未点赞才点击。
+4. 只接受同一控件 `before_state=not_liked -> after_state=liked`。
+5. 页面确认后立即追加 `outgoing_like_confirmed`；新运行自动使用 `settlement_mode=immediate`。
+6. 每次确认点赞后评论 `👍👍👍`；相同本人评论已可见时不重复，新增评论可见后才记录。
+7. 从评论链或本地队列继续候选。同一个 run 持续到恰好 200 位，不按固定点赞数拆分。
+8. 配额为 `120 exploit_first / 60 new / 20 retest`；确认点赞数可少于 200。
+9. 浏览器每批最多 10 位；每批后读取同一 run 的覆盖和最后事件进行对账。批次只是工具与恢复边界，不创建新 run、不重新批准、不延迟逐动作 checkpoint。
+10. 覆盖达到 50/100/150 位时只向同一 `feedback_supervisor` 发送压缩状态；普通 10 位 checkpoint 不启动新的监督模型。
 
 ### 即时结算
 
@@ -112,6 +113,7 @@ Preflight 封存后、用户确认前，监督员先审计候选数量、首次 
 | 最新 3 张只完成 1-2 张 | 扫描不完整 | 保留同一 checkpoint，只补缺失作品；不得把缺失作品按零反馈结算 |
 | 候选主页第一张不可读 | 页面临时不可用 | 记录 `latest_work_unavailable`，计入覆盖后转下一位 |
 | 第一张已经点赞 | 不应重复点赞 | 记录 `latest_work_already_liked`，计入覆盖后转下一位 |
+| 合法作品页缺少一种 owner 标记 | 页面存在两种已验证资源结构 | 核对上传者稳定 actor 链接与图片资源 URL 中的稳定摄影师 ID；满足任一且无冲突即可继续，两者都缺失或任一证据冲突则安全暂停 |
 | checkpoint 写入旧 run | 临时命令复用旧 ID | 写入前核对当前 `run_id`、`scan_id` 和绝对 state root，写后检查返回值 |
 | Chrome 有进程但无法连接 | 没有可接管窗口或通信未建立 | 保留 runtime，打开 Chrome 窗口后最多重连一次 |
 | 点赞或评论状态不明确 | 可能重复动作 | 立即 `safety_paused: ambiguous_state`，不重按 |

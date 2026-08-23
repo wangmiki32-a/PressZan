@@ -169,6 +169,18 @@ class SkillContractTest(unittest.TestCase):
         self.assertIn("before_state", text)
         self.assertIn("after_state", text)
 
+    def test_owner_identity_accepts_two_verified_page_shapes_but_fails_closed_on_conflict(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        browser = (ROOT / "references" / "browser-workflow.md").read_text(encoding="utf-8")
+        recovery = (ROOT / "references" / "operational-recovery.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+
+        for text in (skill, browser, recovery, operations):
+            self.assertIn("上传者稳定 actor 链接", text)
+            self.assertIn("图片资源 URL 中的稳定摄影师 ID", text)
+            self.assertIn("任一", text)
+            self.assertIn("冲突", text)
+
     def test_event_schema_documents_every_valid_event(self):
         text = (ROOT / "references" / "event-schema.md").read_text(encoding="utf-8")
         expected = (

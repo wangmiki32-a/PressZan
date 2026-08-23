@@ -50,11 +50,6 @@ def _empty(daily_task_id: str, status: str, *reasons: str) -> ExecutionEfficienc
     )
 
 
-def _execution_run(logs: Sequence[RunLog], daily_task_id: str) -> Optional[RunLog]:
-    matches = [item for item in logs if item.mode == "run" and item.daily_task_id == daily_task_id]
-    return max(matches, key=lambda item: (item.ended_at, item.run_id), default=None)
-
-
 def _approved_preview_id(run: RunLog) -> Optional[str]:
     approvals = [
         str(item.data["preview_id"])
@@ -99,7 +94,8 @@ def _raw_batch(
     state: AggregateState,
     daily_task_id: str,
 ) -> Tuple[Optional[_ScorableBatch], ExecutionEfficiency]:
-    run = _execution_run(logs, daily_task_id)
+    daily_runs = [item for item in logs if item.mode == "run" and item.daily_task_id == daily_task_id]
+    run = max(daily_runs, key=lambda item: (item.ended_at, item.run_id), default=None)
     if run is None:
         return None, _empty(daily_task_id, "unscorable", "execution_run_not_found")
 
@@ -110,7 +106,7 @@ def _raw_batch(
     daily = state.daily_tasks.get(daily_task_id)
     if coverage_count != TARGET_COUNT or daily is None or len(daily.covered_photographer_ids) != TARGET_COUNT:
         hard_reasons.append("coverage_not_200")
-    if any(item.kind == "safety_paused" for item in run.events):
+    if any(event.kind == "safety_paused" for item in daily_runs for event in item.events):
         hard_reasons.append("safety_paused")
     if hard_reasons:
         return None, _empty(daily_task_id, "blocked", *hard_reasons)

@@ -55,6 +55,9 @@ class DocumentationContractTest(unittest.TestCase):
         self.assertIn("不纳入", quality)
         self.assertIn("前次结论不可访问时", quality)
         self.assertIn("权限来自用户批准", quality)
+        self.assertIn("daily_task_id 聚合", quality)
+        self.assertIn("分片恢复", quality)
+        self.assertIn("任一关联 run", quality)
 
     def test_superpowers_index_covers_every_artifact_and_each_has_status(self):
         index = read(SUPERPOWERS_ROOT / "README.md")
