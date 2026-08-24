@@ -75,6 +75,7 @@
 ## 安全值
 
 - `before_state` / `after_state` 必须来自同一可见控件的前后读取。
+- `outgoing_comment_confirmed` 只接受 `before_state=not_visible`、`after_state=visible`；其他枚举必须在追加 checkpoint 前拒绝。
 - 新运行的 `quota_bucket` 仅用 `exploit_first`、`new`、`retest`；旧 `verified_second` 只读兼容。
 - 新运行的摄影师覆盖由 `outgoing_like_confirmed` 与 `candidate_skipped` 中不同 `photographer_id` 的并集重建；两类事件都用批准计划中的 `quota_bucket` 计入 `120/60/20` 实际配额，同一摄影师每次任务只以首次覆盖事件计一次，恰好 200 位才完成。历史无 `quota_bucket` 的 skip 继续可读，旧 `verified_second` 继续可读，新运行不再生成该桶。
 - `scan_id` 只要求在同一 `run_id` 内唯一；重建器使用 `(run_id, scan_id)` 关联启动扫描、作品、观察、issue 与 summary。

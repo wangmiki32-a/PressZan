@@ -62,7 +62,7 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 
 1. 先复用最新 3 张扫描中的点赞者和本地历史生成 preview；不得默认扫描最近 30 幅，也不得点赞、评论、关注或私信。
 2. 候选不足时，从第 4 张本人作品开始按从新到旧顺序增量补充：每次只增加一个来源，以每批最多 10 位读取并追加观察，再重算 preview；达到 200 位即停止，最近 30 幅只是候选来源上限。
-3. preview 仍在有效期且之后没有确认互动，只按 `source_url` 分组快速复核已批准候选；不重复最新 3 张反馈扫描或已完成的候选来源。
+3. preview 仍在有效期且之后没有确认互动，只按 `source_url` 分组快速复核已批准候选；把复核所得 `candidate_observed` 写入新的 approval run checkpoint 后才可调用 `approve`，不得用空 checkpoint 申请批准；不重复最新 3 张反馈扫描或已完成的候选来源。
 4. 每个新 run 只确认一次，run 内不重复询问。`preview_not_found`、`preview_changed`、`preview_expired` 或 `preview_not_latest` 表示批准对象已失效：封存当前 approval run 为 `approval_rejected`，重新 preflight 后对新预览重新确认；不得绕过运行时或平台强制确认。
 
 ## 连续覆盖 200 位摄影师
@@ -72,7 +72,7 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 3. 用每批最多 10 位作为状态汇报和恢复边界，每批后核对同一 run 的日志覆盖数；这不是新的审批、结算或业务 run。每个确认动作仍立即追加 checkpoint。
 4. 点赞前读取 `before_state=not_liked`；点击一次后重新读取同一控件。只有 `after_state=liked` 可见才记录成功。
 5. 每次确认后立即追加 `outgoing_like_confirmed`，新运行使用 `settlement_mode=immediate`；禁止在结束后集中回填。
-6. 每次确认点赞后，在同一作品评论固定文本 `👍👍👍`。当前账号已有相同可见评论时不重复；新增评论只有可见后才追加 `outgoing_comment_confirmed`。状态不明确立即 `safety_paused`。
+6. 每次确认点赞后，在同一作品评论固定文本 `👍👍👍`。当前账号已有相同可见评论时不重复；新增评论只有按本人稳定身份确认可见后，才以 `before_state=not_visible`、`after_state=visible` 追加 `outgoing_comment_confirmed`。状态不明确立即 `safety_paused`。
 7. 配额固定为 `120 exploit_first / 60 new / 20 retest`。桶不足时确定性回填，但不得重复摄影师或处理第 201 位。
 8. `exploit_first` 优先 verified/promising；`retest` 只接纳冷却满 7 天的 dormant；其余进入 new。确认点赞数可以少于 200。
 9. 新触达在任务封存后立即成为一个未反馈轻负样本；后续最新 3 张扫描发现该摄影师新点赞时，同一触达改为 1-3 分正反馈，不同时保留正负。

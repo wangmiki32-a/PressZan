@@ -33,7 +33,7 @@
 1. 仅当 preview 属于同一 `daily_task_id`、未过期、且 preview 后确认互动仍为 0 时使用。
 2. 从已封存 preview 读取 `candidate_plan`，按 `source_url` 分组。每个来源页只访问一次，等待评论区稳定后读取候选链接。
 3. 只为已批准且仍可见的候选追加 `candidate_observed`；不要加入其他评论者，也不要重新打开点赞者列表。
-4. 候选缺失、顺序或配额变化时让 `approve` 返回 `preview_changed`；不得抄写旧观察来匹配 digest。
+4. 调用 `approve` 前确认新的 approval run checkpoint 已包含本次快速复核写入的候选观察；空 checkpoint 不得调用 `approve`。候选缺失、顺序或配额变化时让 `approve` 返回 `preview_changed`；不得抄写旧观察来匹配 digest。
 5. 快速复核不重复完整 30 幅扫描，也不重复本人最新 3 张反馈扫描。
 
 ## 点赞执行
@@ -42,7 +42,7 @@
 2. 打开候选主页后只检查当前第一张作品，不扫描其余作品。第一张已点赞记录 `latest_work_already_liked`；不可读记录 `latest_work_unavailable`。两种 `candidate_skipped` 都写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖。
 3. 身份校验同时要求当前账号正确、页面无阻断信号、候选主页 URL 含稳定摄影师 ID。第一张作品的正向 owner 证据允许两种已验证页面形态：上传者稳定 actor 链接，或图片资源 URL 中的稳定摄影师 ID；满足任一才可继续。两者都缺失，或任一可见证据与候选 ID 冲突时立即安全暂停，不得把展示名、vanity slug 或 CDN 路径缺少 ID 单独判为不匹配。
 4. 点赞前读取 `before_state=not_liked`。点击一次后重新读取同一控件；仅在 `after_state=liked` 可见时记录 `outgoing_like_confirmed`。状态不明确时不重按。
-5. 每次确认点赞后，在同一作品评论 `👍👍👍`。评论区可能同时存在主评论框和回复框；只选择当前可见的顶层主评论框。先按当前账号稳定身份与完全相同文本确认本人评论；他人的相同文本不算。没有时只提交一次，本人评论可见后记录 `outgoing_comment_confirmed`。评论区不可用或状态不明确时立即安全暂停。
+5. 每次确认点赞后，在同一作品评论 `👍👍👍`。评论区可能同时存在主评论框和回复框；只选择当前可见的顶层主评论框。先按当前账号稳定身份与完全相同文本确认本人评论；他人的相同文本不算。没有时只提交一次，本人评论可见后以 `before_state=not_visible`、`after_state=visible` 记录 `outgoing_comment_confirmed`。评论区不可用或状态不明确时立即安全暂停。
 6. 成功或跳过后可从当前作品评论区选择下一位；链路不足时从本地高分队列重新播种。每位摄影师每次任务只处理一次。
 7. 同一个 run 持续到恰好覆盖 200 位不同摄影师、安全暂停或候选耗尽。确认点赞数可以少于 200，不得处理第 201 位。
 8. 配额是 `120 exploit_first / 60 new / 20 retest`；浏览器只执行 selector 给出的计划，不自行变更层级或配额。
@@ -57,6 +57,8 @@
 
 - 普通加载失败只刷新一次，再读取；仍失败则追加 `scan_issue` 或 `candidate_skipped`。
 - 浏览器调用超时、返回非 JSON 或连接重置时，先读取当前页面和 checkpoint；用已保存的 before state、当前 after state 与最近 action ID 对账，再决定继续、补记或安全暂停，禁止盲目重放点击。
+- 浏览器自动化通过本地子进程调用 CLI 时必须继承当前环境；可用解释器的 UTF-8 开关修正编码，但不得用只含单个变量的环境覆盖继承环境。进入批次前先用只读 `status --json` 验证调用通道。
+- 页面已确认动作但 checkpoint 写入失败时立即停止当前批次；只有同一页面仍能证明 after state、且 checkpoint 明确缺少该 action 时才补记一次，否则写 `safety_paused`，不得再次点击或提交。
 - CAPTCHA、限频、登录失效、平台警告、账号不匹配或点赞/评论状态不明确时，立即记录 `safety_paused`、最后安全 action ID、页面 URL 和证据摘要，然后停止。
 - 不解决 CAPTCHA，不规避限频，不切换账号，不盲点坐标，不用搜索引擎代替登录页面。
 - 恢复时先 `status --json`，再 `resume --run-id <run_id>`，从最后一个确认事件继续。

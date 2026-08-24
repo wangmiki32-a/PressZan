@@ -990,6 +990,41 @@ class CliTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, payload)
 
+    def test_comment_contract_rejects_invalid_visibility_transition_before_append(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_approved_likes(root, 0, dt(12, 8), "2026-08-12")
+            result, begun = invoke(root, "begin", "--mode", "run", "--now", "2026-08-12T09:00:00+00:00")
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            result, payload = invoke(
+                root,
+                "event",
+                "--run-id",
+                begun["run_id"],
+                "--kind",
+                "outgoing_comment_confirmed",
+                "--field",
+                "content=👍👍👍",
+                "--field",
+                "action_id=comment-1",
+                "--field",
+                "photographer_id=p1",
+                "--field",
+                "photo_id=photo-1",
+                "--field",
+                "before_state=not_present",
+                "--field",
+                "after_state=present",
+                "--now",
+                "2026-08-12T09:01:00+00:00",
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "invalid_comment_transition", payload)
+            _, resumed = invoke(root, "resume", "--run-id", begun["run_id"])
+            self.assertFalse(any(item["kind"] == "outgoing_comment_confirmed" for item in resumed["events"]))
+
     def test_active_run_can_resume_and_carry_actions_across_shanghai_midnight(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

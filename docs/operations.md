@@ -72,7 +72,7 @@ Preflight 封存后、用户确认前，监督员先审计候选数量、首次 
 
 每个新 run 只确认一次，run 内不重复询问。用户回复“确认执行”后，skill 解析最新 preview；满足同一 `daily_task_id`、仍在 24 小时有效期且 preview 后没有确认互动，才快速复核。跨过日界线本身不会使 preview 失效。preview 失效时需要确认新的批准对象；运行时或平台强制确认不得绕过。
 
-快速复核只打开候选计划中的唯一 `source_url`。稳定字段、顺序、配额或 digest 变化时返回 `preview_changed`，封存 `approval_rejected` 后重新 preflight。
+快速复核只打开候选计划中的唯一 `source_url`，并把本次复核的 `candidate_observed` 写入新的 approval run checkpoint 后再调用 `approve`；空 checkpoint 不得申请批准。稳定字段、顺序、配额或 digest 变化时返回 `preview_changed`，封存 `approval_rejected` 后重新 preflight。
 
 ### 点赞执行
 
@@ -81,7 +81,7 @@ Preflight 封存后、用户确认前，监督员先审计候选数量、首次 
 3. 已点赞或不可读时记录 `candidate_skipped`，写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖；未点赞才点击。
 4. 只接受同一控件 `before_state=not_liked -> after_state=liked`。
 5. 页面确认后立即追加 `outgoing_like_confirmed`；新运行自动使用 `settlement_mode=immediate`。
-6. 每次确认点赞后评论 `👍👍👍`；相同本人评论已可见时不重复，新增评论可见后才记录。
+6. 每次确认点赞后评论 `👍👍👍`；相同本人评论已可见时不重复，新增评论按本人稳定身份确认可见后，才以 `not_visible -> visible` 记录。
 7. 从评论链或本地队列继续候选。同一个 run 持续到恰好 200 位，不按固定点赞数拆分。
 8. 配额为 `120 exploit_first / 60 new / 20 retest`；确认点赞数可少于 200。
 9. 浏览器每批最多 10 位；每批后读取同一 run 的覆盖和最后事件进行对账。批次只是工具与恢复边界，不创建新 run、不重新批准、不延迟逐动作 checkpoint。
@@ -118,6 +118,7 @@ Preflight 封存后、用户确认前，监督员先审计候选数量、首次 
 | Chrome 有进程但无法连接 | 没有可接管窗口或通信未建立 | 保留 runtime，打开 Chrome 窗口后最多重连一次 |
 | 点赞或评论状态不明确 | 可能重复动作 | 立即 `safety_paused: ambiguous_state`，不重按 |
 | 浏览器调用超时或结果无法解析 | 页面可能已变化，外层没有可靠结果 | 先对账，再决定是否补动作；检查页面、最近 action 和 checkpoint，禁止盲目重按 |
+| 页面动作已确认但 CLI 写入中断 | 子进程环境、编码或调用通道失败 | 立即停批；同一页面 after state 明确且 checkpoint 缺 action 时只补记一次，否则安全暂停；子进程须继承环境并先用 `status --json` 验证 |
 | GitHub TLS handshake 间歇失败 | Meta Tunnel/fake-IP 或直连链路抖动 | 不得关闭 SSL 校验；验证本地代理后仅设置仓库级 `http.proxy`，端口不得跨机器硬编码 |
 
 更细恢复步骤见 [`operational-recovery.md`](../.agents/skills/500px-feedback-growth/references/operational-recovery.md)。

@@ -462,6 +462,14 @@ def command_event(args) -> int:
         )
     if args.kind == "outgoing_comment_confirmed" and data.get("content") != "👍👍👍":
         return _error("invalid_comment_content", expected="👍👍👍")
+    if args.kind == "outgoing_comment_confirmed" and (
+        data.get("before_state") != "not_visible" or data.get("after_state") != "visible"
+    ):
+        return _error(
+            "invalid_comment_transition",
+            expected_before_state="not_visible",
+            expected_after_state="visible",
+        )
     event = Event(args.kind, now, data)
     additions = [event]
     state = rebuild_state(load_effective_runs(root), now)

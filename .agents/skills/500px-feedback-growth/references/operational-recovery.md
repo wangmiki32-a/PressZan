@@ -15,6 +15,7 @@
 | 最新作品更换 | 本人主页展示发生变化 | 以本次 scan 冻结的 3 个 `photo_id` 完成本次扫描；下一次启动重新读取最新 3 张 |
 | 扫描缺少作品 | 不完整证据 | 只把实际完整读取的作品列入 `--completed-photo-id`；Dashboard 显示“数据不完整” |
 | 批准返回 `preview_changed` | 候选、顺序或 quota snapshot 已变化 | 封存为 `approval_rejected` 并重新 preflight；不得继续旧名单 |
+| `approve` 前 approval run 没有候选观察 | 快速复核结果未写入当前 checkpoint | 不调用 `approve`；先核对当前 run，再把本次只读复核所得观察写入，禁止复制旧 checkpoint 冒充复核 |
 | worktree 出现独立 `.local` | 状态根漂移 | 运行 `doctor`；默认 resolver 必须回到主仓库，必要时用 `PRESSZAN_STATE_ROOT` 指向唯一状态根 |
 | `doctor` 返回 `untracked_sealed_runs` | 当前状态未提交或 clone 未拉到最新 runs | 不进入页面；确认无未封存 checkpoint 后提交或 pull sealed runs |
 | checkpoint 事件落入旧运行 | 临时脚本复用旧 ID | 每次写入前核对 `run_id`、`scan_id`、`state-root`，写后检查返回 position |
@@ -39,6 +40,7 @@
 - Sealed 后 retained checkpoint 只作审计；CLI 拒绝继续 append 或 resume。
 - 浏览器连接丢失但未出现安全警告时保留 active checkpoint；重连后先读 `resume` 输出和页面当前状态。
 - 动作调用超时后必须先对账，再决定是否补动作：checkpoint 已有确认事件则继续下一位；仍是明确未点赞可重试一次；页面已变化但无法证明 `before -> after` 时写 `safety_paused`。
+- 页面已经显示确认后的状态、但 CLI 写入中断时立即停批：仅当同一页面仍能证明 after state 且 checkpoint 缺少该 action 时补记一次；证据不足时安全暂停，禁止盲目重放。通过子进程调用 CLI 时继承完整环境，并在恢复批次前以 `status --json` 验证通道。
 - 只有覆盖 200 位、安全暂停或候选耗尽时才封存；未知中断不得伪写 `completed`。
 - 跨日 active run 沿用原 `daily_task_id` 和剩余覆盖继续执行；只有完成、候选耗尽或安全暂停时才封存。
 
