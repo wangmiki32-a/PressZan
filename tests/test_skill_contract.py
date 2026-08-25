@@ -231,15 +231,14 @@ class SkillContractTest(unittest.TestCase):
         for quota in ("120", "60", "20"):
             self.assertIn(quota, skill)
 
-    def test_incomplete_feedback_scan_does_not_block_candidate_workflow(self):
+    def test_incomplete_feedback_scan_blocks_preview_until_complete(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         browser = (ROOT / "references" / "browser-workflow.md").read_text(encoding="utf-8")
         operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
 
         for text in (skill, browser, operations):
-            self.assertIn("不阻止本轮互动", text)
-        self.assertNotIn("3/3 完成后再进入候选 preflight", browser)
-        self.assertNotIn("3/3 才进入正常候选流程", operations)
+            self.assertIn("latest_three_scan_incomplete", text)
+            self.assertNotIn("不阻止本轮互动", text)
 
     def test_entrypoint_orders_scan_before_preview_and_run(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")

@@ -58,7 +58,7 @@ Windows 原生 Codex 使用同参数启动器：
 2. 从本人主页确认账号和最新 3 张公开作品，逐张记录 `work_observed` 并完整读取点赞者。
 3. 首次读取某张作品只建立 baseline；后续扫描只对此前未见 pair 计分。
 4. 每张加载失败最多刷新一次。仍失败写 `scan_issue`，不要把它列为 completed 或按零点赞处理。
-5. 使用 `feedback-scan-complete` 生成重建器校验过的 summary。部分完成封存为“数据不完整”，但不阻止本轮互动；summary 写入后可继续正常候选流程。
+5. 三张都读取完成后，只调用一次 `feedback-scan-complete`，在同一命令中重复 3 个 `--completed-photo-id`。部分完成 summary 仍保留为“数据不完整”事实，但 `preview` 会返回 `latest_three_scan_incomplete`；必须补齐缺失作品或以新 `scan_id` 完整重建，不能直接进入本轮互动。
 
 ### Preflight
 
@@ -109,6 +109,7 @@ Preflight 封存后、用户确认前，监督员先审计候选数量、首次 
 | 现象 | 判定 | 最短恢复 |
 |---|---|---|
 | `preview_changed` | 候选或批准事实发生变化 | 封存旧 approval run；重新 preflight，不伪造旧顺序 |
+| `latest_three_scan_incomplete` | 最新 3 张 summary 未同时确认 3 张完成 | 保留 checkpoint；补齐缺失作品或用新 `scan_id` 完整重建，再生成 preview |
 | 点赞数字可见但弹层条目为 0 | 异步加载或首次展开失败 | 刷新读取一次；仍为空记录 `liker_list_unavailable` |
 | 最新 3 张只完成 1-2 张 | 扫描不完整 | 保留同一 checkpoint，只补缺失作品；不得把缺失作品按零反馈结算 |
 | 候选主页第一张不可读 | 页面临时不可用 | 记录 `latest_work_unavailable`，计入覆盖后转下一位 |

@@ -763,6 +763,47 @@ class CliTest(unittest.TestCase):
             self.assertEqual(preview["quota_snapshot"]["confirmed_likes"], 0)
             self.assertEqual(preview["quota_snapshot"]["covered_photographers"], [])
 
+    def test_preview_rejects_incomplete_latest_three_feedback_scan(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            now = "2026-08-19T08:00:00+00:00"
+            _, begun = invoke(root, "begin", "--mode", "preflight", "--now", now)
+            append_checkpoint_events(
+                root,
+                begun["run_id"],
+                latest_three_scan("latest-three", dt(19, 8), include_summary=False),
+            )
+            result, completed = invoke(
+                root,
+                "feedback-scan-complete",
+                "--run-id",
+                begun["run_id"],
+                "--scan-id",
+                "latest-three",
+                "--completed-photo-id",
+                "mine-1",
+                "--now",
+                now,
+            )
+            self.assertEqual(result.returncode, 0, completed)
+            add_candidate(root, begun["run_id"])
+
+            result, payload = invoke(
+                root,
+                "preview",
+                "--run-id",
+                begun["run_id"],
+                "--seed",
+                "8192026",
+                "--now",
+                now,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(payload["code"], "latest_three_scan_incomplete")
+            checkpoint = read_checkpoint(root, begun["run_id"])
+            self.assertNotIn("preview_created", [item.kind for item in checkpoint.events])
+
     def test_preview_plans_only_remaining_163_after_37_covered_photographers(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

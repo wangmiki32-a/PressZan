@@ -10,10 +10,10 @@
 
 1. 从本人主页按当前展示顺序读取最新 3 张公开作品，确认 owner、稳定 `photo_id`、canonical URL 和 position。
 2. 写 `scan_started`，设置 `purpose=latest_three_feedback`；每张立即写 `work_observed`。
-3. 逐张打开点赞者列表并完整读取稳定摄影师 ID。每个 pair 写 `received_like_observed`；零点赞也必须以该作品列入 `feedback-scan-complete --completed-photo-id` 表达完整扫描。
+3. 逐张打开点赞者列表并完整读取稳定摄影师 ID。每个 pair 写 `received_like_observed`；零点赞也必须以该作品列入 `feedback-scan-complete --completed-photo-id` 表达完整扫描。三张读完后只调用一次 `feedback-scan-complete`，在同一命令中重复 3 个 `--completed-photo-id`；不得逐张调用。
 4. 某张加载失败只刷新一次；仍失败写 `scan_issue`，不要把该作品列为 completed，也不要把缺失数据解释成零点赞。
 5. 首次完整读取某张作品只建立 baseline。后续扫描由 CLI 对此前未见 pair 逐张计分；浏览器层不得手工判断或回填反馈分。
-6. 无论是否 3/3，写入本次 `feedback_scan_completed` 后都可进入候选 preflight；部分扫描必须明确为“数据不完整”，缺失作品不按零反馈，并且不阻止本轮互动。
+6. 部分扫描仍写 `feedback_scan_completed` 并明确为“数据不完整”，缺失作品不按零反馈；但首次 preview 必须验证最新 summary 的 `photo_ids` 与 `completed_photo_ids` 都恰好为 3 且集合相同。否则处理 `latest_three_scan_incomplete`，补齐缺失作品或以新 `scan_id` 完整重建后再 preview。
 
 ## Preflight：按需候选扫描
 

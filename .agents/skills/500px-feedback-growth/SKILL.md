@@ -44,8 +44,8 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 2. 执行 `status --json`。有 recoverable run 时始终使用 `resume --run-id <run_id>`；跨日继续同一 run，不重置覆盖或创建新任务。
 3. `doctor/status` 后为本次任务实例化一次项目级只读 `feedback_supervisor`。不可用时由主 Agent按同一五段格式审计，并明确标记 `supervisor_degraded`，不得伪称独立监督。
 4. 无可恢复 run 时执行 `begin --mode preflight`，先完成“本人最新 3 张反馈扫描”。
-5. 执行 `feedback-scan-complete --run-id <run_id> --scan-id <scan_id> --completed-photo-id <photo_id>`，为每张已完整读取的作品重复 `--completed-photo-id`。
-6. 先用最新 3 张扫描和本地历史记录 `candidate_observed` 并执行 `preview --run-id <run_id> --seed <seed>`；候选不足时按“增量补充”规则扩展，达到 200 位即停止，然后封存 preflight。监督员在展示摘要和用户确认前完成首次审计。
+5. 只调用一次 `feedback-scan-complete`，在同一条命令中为最新 3 张分别重复 `--completed-photo-id <photo_id>`；不得按作品分三次调用。首次 preview 前确认返回的 `photo_ids` 与 `completed_photo_ids` 都恰好包含这 3 张且集合相同。
+6. 先用最新 3 张扫描和本地历史记录 `candidate_observed` 并执行 `preview --run-id <run_id> --seed <seed>`；最新 3 张未完整结算时 CLI 返回 `latest_three_scan_incomplete`，必须补齐或以新 `scan_id` 完整重建后再 preview。候选不足时按“增量补充”规则扩展，达到 200 位即停止，然后封存 preflight。监督员在展示摘要和用户确认前完成首次审计。
 7. 用户确认后先执行只读 `latest-preview`，再执行 `begin --mode run --approve-preview <preview_id>` 和 `approve --run-id <run_id> --preview-id <preview_id>`；仅在 `approved=true` 时互动。
 8. 连续处理本次剩余覆盖。浏览器按每批最多 10 位执行和对账，但不拆分业务 run；覆盖达到 50/100/150 位时向同一监督员发送压缩状态，每 10 位对账不启动新的监督模型。完成、安全暂停或候选耗尽时执行 `finish --run-id <run_id> --status <status>`，再执行 `status --json` 和 `dashboard`；终态后由监督员读取 sealed 事实做最终审计与 Consolidation 判断。
 
@@ -56,7 +56,7 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 3. 每张作品必须完整打开点赞者列表。首次读取失败只刷新一次；仍失败写 `scan_issue`，该作品不列入 `--completed-photo-id`。
 4. 某个 `photo_id` 第一次被完整扫描时只建立 baseline，已有点赞不计分。以后扫描相同作品时，每个此前未见的 `(photo_id, photographer_id)` 计 1 个反馈分；同一轮 3 张各有新点赞可计 3 分。
 5. 新 pair 只归到该摄影师扫描前最近一次触达；单次触达最多 3 分。扫描发现时间是 observation time，不是平台真实点赞时间。
-6. 只有 3/3 完整才是完整扫描。不完整扫描仍写 `feedback_scan_completed` 保存已完成事实，但缺失作品显示“数据不完整”，不得按零反馈结算；记录这些事实后不阻止本轮互动。
+6. 只有 3/3 完整才是完整扫描。不完整扫描仍写 `feedback_scan_completed` 保存已完成事实，但缺失作品显示“数据不完整”，不得按零反馈结算；`latest_three_scan_incomplete` 会阻止生成 preview，补齐或完整重建后才能进入互动。
 
 ## 只读 Preflight 与批准
 

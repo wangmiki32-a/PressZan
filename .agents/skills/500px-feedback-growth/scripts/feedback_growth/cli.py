@@ -1318,6 +1318,27 @@ def command_preview(args) -> int:
     root = _state_root(args.state_root)
     now = _now(args.now)
     checkpoint = read_checkpoint(root, args.run_id)
+    latest_three_starts = [
+        item
+        for item in checkpoint.events
+        if item.kind == "scan_started" and item.data.get("purpose") == "latest_three_feedback"
+    ]
+    if latest_three_starts:
+        scan_id = latest_three_starts[-1].data["scan_id"]
+        summaries = [
+            item
+            for item in checkpoint.events
+            if item.kind == "feedback_scan_completed" and item.data["scan_id"] == scan_id
+        ]
+        summary = summaries[-1] if summaries else None
+        photo_ids = set(summary.data["photo_ids"]) if summary else set()
+        completed_photo_ids = set(summary.data["completed_photo_ids"]) if summary else set()
+        if len(photo_ids) != 3 or completed_photo_ids != photo_ids:
+            return _error(
+                "latest_three_scan_incomplete",
+                target_count=3,
+                completed_count=len(completed_photo_ids),
+            )
     state = rebuild_state(load_effective_runs(root), now)
     daily_task_id = checkpoint.header.daily_task_id
     quota_snapshot = _quota_snapshot(state, daily_task_id)
