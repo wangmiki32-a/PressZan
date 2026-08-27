@@ -55,7 +55,7 @@ Windows 原生 Codex 使用同参数启动器：
 ### 最新 3 张反馈扫描
 
 1. 用户手动完成上传和分享。
-2. 从本人主页确认账号和最新 3 张公开作品，逐张记录 `work_observed` 并完整读取点赞者。
+2. 从本人主页确认账号和最新 3 张公开作品。先写 `scan_started` 并确认成功落盘，再为同一 `scan_id` 逐张记录 `work_observed` 并完整读取点赞者；开始事件失败时停止，不得先写作品观察。
 3. 首次读取某张作品只建立 baseline；后续扫描只对此前未见 pair 计分。
 4. 每张加载失败最多刷新一次。仍失败写 `scan_issue`，不要把它列为 completed 或按零点赞处理。
 5. 三张都读取完成后，只调用一次 `feedback-scan-complete`，在同一命令中重复 3 个 `--completed-photo-id`。部分完成 summary 仍保留为“数据不完整”事实，但 `preview` 会返回 `latest_three_scan_incomplete`；必须补齐缺失作品或以新 `scan_id` 完整重建，不能直接进入本轮互动。
@@ -63,6 +63,8 @@ Windows 原生 Codex 使用同参数启动器：
 ### Preflight
 
 最新 3 张反馈扫描之后，先复用这 3 张的点赞者和本地历史生成 preview。不得默认扫描最近 30 幅；候选不足时，从第 4 张本人作品开始按从新到旧顺序增量补充，每次只增加一个来源并重算 preview，达到 200 位即停止。最近 30 幅只是上限。不得点赞、评论、关注或私信。
+
+每个新扩展来源也必须先写合法的 `scan_started` 并确认成功落盘，之后才写同一 `scan_id` 的 `work_observed` 和点赞者观察。不得使用 schema 未定义的 `purpose`；开始事件失败时停止且不补写作品观察。
 
 长列表每批最多 10 位，每页观察立即追加事件。点赞数字存在但列表空白时只刷新一次；仍为空写 `scan_issue: liker_list_unavailable`。
 
@@ -76,7 +78,7 @@ Preflight 封存后、用户确认前，监督员先审计候选数量、首次 
 
 ### 点赞执行
 
-1. 候选主页只检查当前第一张作品。
+1. 候选主页只检查可见“公开作品”语义区域中公开作品网格的第一张可见作品卡片。禁止用全页第一个、`main` 内第一个或通用 `/community/photo-details/` 链接替代；推荐、影集、相关内容和装饰图片一律排除。无法可靠定位公开作品网格时按 `latest_work_unavailable` 跳过，不回退通用选择器。
 2. 身份校验要求账号正确、页面无阻断信号且候选主页 URL 含稳定摄影师 ID；作品页以上传者稳定 actor 链接或图片资源 URL 中的稳定摄影师 ID 满足任一作为正向 owner 证据。两者都缺失或任一可见证据冲突时安全暂停；vanity slug 不同或 CDN 路径缺少 ID 本身不是冲突。
 3. 已点赞或不可读时记录 `candidate_skipped`，写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖；未点赞才点击。
 4. 只接受同一控件 `before_state=not_liked -> after_state=liked`。
@@ -114,6 +116,8 @@ Preflight 封存后、用户确认前，监督员先审计候选数量、首次 
 | 最新 3 张只完成 1-2 张 | 扫描不完整 | 保留同一 checkpoint，只补缺失作品；不得把缺失作品按零反馈结算 |
 | 候选主页第一张不可读 | 页面临时不可用 | 记录 `latest_work_unavailable`，计入覆盖后转下一位 |
 | 第一张已经点赞 | 不应重复点赞 | 记录 `latest_work_already_liked`，计入覆盖后转下一位 |
+| 全页第一个作品链接属于推荐、影集或装饰内容 | 选择器范围漂移，未限定公开作品网格 | 仅取公开作品网格第一张作品卡片；无法定位时记 `latest_work_unavailable`，不得回退通用选择器，owner 校验仍作为独立安全门 |
+| `work_observed` 早于同一扫描的 `scan_started` | 事件写入顺序错误 | 必须先让合法 `scan_started` 成功落盘；失败即停止，不写或补写 `work_observed` |
 | 合法作品页缺少一种 owner 标记 | 页面存在两种已验证资源结构 | 核对上传者稳定 actor 链接与图片资源 URL 中的稳定摄影师 ID；满足任一且无冲突即可继续，两者都缺失或任一证据冲突则安全暂停 |
 | checkpoint 写入旧 run | 临时命令复用旧 ID | 写入前核对当前 `run_id`、`scan_id` 和绝对 state root，写后检查返回值 |
 | Chrome 有进程但无法连接 | 没有可接管窗口或通信未建立 | 保留 runtime，打开 Chrome 窗口后最多重连一次 |

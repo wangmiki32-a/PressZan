@@ -181,6 +181,28 @@ class SkillContractTest(unittest.TestCase):
             self.assertIn("任一", text)
             self.assertIn("冲突", text)
 
+    def test_candidate_first_work_is_scoped_to_the_public_works_grid(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        browser = (ROOT / "references" / "browser-workflow.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+
+        for text in (skill, browser, operations):
+            self.assertIn("公开作品网格", text)
+            self.assertIn("全页第一个", text)
+        self.assertIn("推荐", browser)
+        self.assertIn("作品卡片", browser)
+
+    def test_expansion_scan_start_must_be_persisted_before_work_observation(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        browser = (ROOT / "references" / "browser-workflow.md").read_text(encoding="utf-8")
+        operations = (PROJECT_ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
+        quality = (PROJECT_ROOT / "docs" / "quality.md").read_text(encoding="utf-8")
+
+        for text in (skill, browser, operations, quality):
+            self.assertIn("scan_started", text)
+            self.assertIn("成功落盘", text)
+            self.assertIn("work_observed", text)
+
     def test_event_schema_documents_every_valid_event(self):
         text = (ROOT / "references" / "event-schema.md").read_text(encoding="utf-8")
         expected = (

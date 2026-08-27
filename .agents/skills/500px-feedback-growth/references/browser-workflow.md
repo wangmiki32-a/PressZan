@@ -9,7 +9,7 @@
 ## 启动扫描：本人最新 3 张
 
 1. 从本人主页按当前展示顺序读取最新 3 张公开作品，确认 owner、稳定 `photo_id`、canonical URL 和 position。
-2. 写 `scan_started`，设置 `purpose=latest_three_feedback`；每张立即写 `work_observed`。
+2. 写 `scan_started`，设置 `purpose=latest_three_feedback`；确认事件成功落盘后，才为同一 `scan_id` 逐张写 `work_observed`。若开始事件失败，停止扫描且不得先写作品观察。
 3. 逐张打开点赞者列表并完整读取稳定摄影师 ID。每个 pair 写 `received_like_observed`；零点赞也必须以该作品列入 `feedback-scan-complete --completed-photo-id` 表达完整扫描。三张读完后只调用一次 `feedback-scan-complete`，在同一命令中重复 3 个 `--completed-photo-id`；不得逐张调用。
 4. 某张加载失败只刷新一次；仍失败写 `scan_issue`，不要把该作品列为 completed，也不要把缺失数据解释成零点赞。
 5. 首次完整读取某张作品只建立 baseline。后续扫描由 CLI 对此前未见 pair 逐张计分；浏览器层不得手工判断或回填反馈分。
@@ -18,7 +18,7 @@
 ## Preflight：按需候选扫描
 
 1. 先复用启动扫描的最新 3 张点赞者和本地历史生成候选，不得默认扫描最近 30 幅作品。启动反馈扫描与候选扩展使用不同 `scan_id`，scope 不得混用。
-2. 候选不足时，从第 4 张本人作品开始按从新到旧顺序增量补充。每次只增加一个来源，点赞者或评论者每批最多 10 位；追加稳定摄影师 ID、`received_like_observed`/`candidate_observed` 后重算 preview，达到 200 位即停止。
+2. 候选不足时，从第 4 张本人作品开始按从新到旧顺序增量补充。每个新来源必须先写 schema 允许的 `scan_started` 并确认成功落盘，再为同一 `scan_id` 写 `work_observed`、`received_like_observed`/`candidate_observed`；开始事件失败时停止，不得先写或补写作品观察。每次只增加一个来源，点赞者或评论者每批最多 10 位；追加稳定摄影师 ID 后重算 preview，达到 200 位即停止。
 3. 同一来源继续滚动时只返回新出现的稳定 ID，避免重复输出完整列表；最近 30 幅是扩展上限，不是每轮必扫数量。
 4. Preflight 只读，不得点赞、评论、关注或私信。
 
@@ -39,7 +39,7 @@
 ## 点赞执行
 
 1. 优先选择本地高分队列；当前评论链可继续时，选择本次任务尚未覆盖且采样得分最高的人。得分差不超过 0.05 时按页面顺序选第一位。
-2. 打开候选主页后只检查当前第一张作品，不扫描其余作品。第一张已点赞记录 `latest_work_already_liked`；不可读记录 `latest_work_unavailable`。两种 `candidate_skipped` 都写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖。
+2. 打开候选主页后，先按可见“公开作品”标签或等价语义容器定位公开作品网格，只选择该网格内第一张可见作品卡片，不扫描其余作品。禁止选择全页第一个、`main` 内第一个或通用 `/community/photo-details/` 链接；推荐、影集、相关内容和装饰图片中的作品卡片均排除。无法可靠定位公开作品网格时不得回退通用选择器，记录 `latest_work_unavailable`。第一张已点赞记录 `latest_work_already_liked`；不可读记录 `latest_work_unavailable`。两种 `candidate_skipped` 都写入批准计划中的 `quota_bucket` 并计入对应策略桶与总覆盖。
 3. 身份校验同时要求当前账号正确、页面无阻断信号、候选主页 URL 含稳定摄影师 ID。第一张作品的正向 owner 证据允许两种已验证页面形态：上传者稳定 actor 链接，或图片资源 URL 中的稳定摄影师 ID；满足任一才可继续。两者都缺失，或任一可见证据与候选 ID 冲突时立即安全暂停，不得把展示名、vanity slug 或 CDN 路径缺少 ID 单独判为不匹配。
 4. 点赞前读取 `before_state=not_liked`。点击一次后重新读取同一控件；仅在 `after_state=liked` 可见时记录 `outgoing_like_confirmed`。状态不明确时不重按。
 5. 每次确认点赞后，在同一作品评论 `👍👍👍`。评论区可能同时存在主评论框和回复框；只选择当前可见的顶层主评论框。先按当前账号稳定身份与完全相同文本确认本人评论；他人的相同文本不算。没有时只提交一次，本人评论可见后以 `before_state=not_visible`、`after_state=visible` 记录 `outgoing_comment_confirmed`。评论区不可用或状态不明确时立即安全暂停。

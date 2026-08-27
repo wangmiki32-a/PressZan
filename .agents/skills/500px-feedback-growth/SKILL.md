@@ -52,7 +52,7 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 ## 本人最新 3 张反馈扫描
 
 1. 验证本人账号后，按主页当前展示顺序读取最新 3 张公开作品；不是 3 张、账号不符或任一作品身份不明确时禁止进入点赞。
-2. 为扫描写 `scan_started`，其中 `purpose=latest_three_feedback`；每张写 `work_observed`，每个可见点赞者写 `received_like_observed`。
+2. 为扫描写 `scan_started`，其中 `purpose=latest_three_feedback`；确认该事件成功落盘后才可为同一 `scan_id` 写 `work_observed`，随后为每个可见点赞者写 `received_like_observed`。`scan_started` 失败时立即停止，不得先写作品观察或使用 schema 未定义的 `purpose`。
 3. 每张作品必须完整打开点赞者列表。首次读取失败只刷新一次；仍失败写 `scan_issue`，该作品不列入 `--completed-photo-id`。
 4. 某个 `photo_id` 第一次被完整扫描时只建立 baseline，已有点赞不计分。以后扫描相同作品时，每个此前未见的 `(photo_id, photographer_id)` 计 1 个反馈分；同一轮 3 张各有新点赞可计 3 分。
 5. 新 pair 只归到该摄影师扫描前最近一次触达；单次触达最多 3 分。扫描发现时间是 observation time，不是平台真实点赞时间。
@@ -61,13 +61,13 @@ Windows 原生 Codex 使用仓库启动器；它依次查找项目 `.venv`、Cod
 ## 只读 Preflight 与批准
 
 1. 先复用最新 3 张扫描中的点赞者和本地历史生成 preview；不得默认扫描最近 30 幅，也不得点赞、评论、关注或私信。
-2. 候选不足时，从第 4 张本人作品开始按从新到旧顺序增量补充：每次只增加一个来源，以每批最多 10 位读取并追加观察，再重算 preview；达到 200 位即停止，最近 30 幅只是候选来源上限。
+2. 候选不足时，从第 4 张本人作品开始按从新到旧顺序增量补充：每个新扩展扫描必须先写合法的 `scan_started` 并确认成功落盘，之后才为同一 `scan_id` 写 `work_observed` 和点赞者观察；失败时停止且不得补写作品观察。每次只增加一个来源，以每批最多 10 位读取并追加观察，再重算 preview；达到 200 位即停止，最近 30 幅只是候选来源上限。
 3. preview 仍在有效期且之后没有确认互动，只按 `source_url` 分组快速复核已批准候选；把复核所得 `candidate_observed` 写入新的 approval run checkpoint 后才可调用 `approve`，不得用空 checkpoint 申请批准；不重复最新 3 张反馈扫描或已完成的候选来源。
 4. 每个新 run 只确认一次，run 内不重复询问。`preview_not_found`、`preview_changed`、`preview_expired` 或 `preview_not_latest` 表示批准对象已失效：封存当前 approval run 为 `approval_rejected`，重新 preflight 后对新预览重新确认；不得绕过运行时或平台强制确认。
 
 ## 连续覆盖 200 位摄影师
 
-1. 每位候选只检查主页当前第一张作品。已点赞或作品不可读时记录 `candidate_skipped`，并写入批准计划中的 `quota_bucket`；无论点赞或跳过，该摄影师本次任务只处理一次并计入覆盖，完成条件是恰好 200 位不同摄影师。
+1. 每位候选只检查其主页可见“公开作品”语义区域内的公开作品网格第一张作品：先可靠定位公开作品网格，再选择网格内第一张可见作品卡片。禁止使用全页第一个、`main` 内第一个或任意通用 `/community/photo-details/` 链接作为替代；推荐、影集、相关内容和装饰图片均不算候选第一张作品。无法可靠定位公开作品网格时记录 `latest_work_unavailable`，不得回退到通用选择器。已点赞或作品不可读时记录 `candidate_skipped`，并写入批准计划中的 `quota_bucket`；无论点赞或跳过，该摄影师本次任务只处理一次并计入覆盖，完成条件是恰好 200 位不同摄影师。
 2. 候选主页 URL 必须包含计划中的稳定摄影师 ID。进入第一张作品后，上传者稳定 actor 链接或图片资源 URL 中的稳定摄影师 ID 满足任一即可作为正向 owner 证据；两者都缺失或任一可见证据发生冲突时立即 `safety_paused`，不得点击。
 3. 用每批最多 10 位作为状态汇报和恢复边界，每批后核对同一 run 的日志覆盖数；这不是新的审批、结算或业务 run。每个确认动作仍立即追加 checkpoint。
 4. 点赞前读取 `before_state=not_liked`；点击一次后重新读取同一控件。只有 `after_state=liked` 可见才记录成功。
